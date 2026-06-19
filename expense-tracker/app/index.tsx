@@ -1,5 +1,4 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Picker } from "@react-native-picker/picker";
 import { format, getDay, getDaysInMonth, startOfMonth } from "date-fns";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -31,8 +30,8 @@ import Svg, { ClipPath, Defs, G, Path, Rect } from "react-native-svg";
 import { figmaColors } from "@/constants/colors";
 import { fontFamily } from "@/constants/typography";
 
-const FIRST_LAUNCH_SPLASH_KEY = "europa:first-launch-splash-seen";
-const FIRST_LAUNCH_SPLASH_DURATION_MS = 2500;
+const HOME_CURRENCY_KEY = "europa:home-currency";
+const SPLASH_DURATION_MS = 2500;
 const SHEET_CLOSE_DISTANCE = 120;
 
 export type Currency = {
@@ -182,17 +181,13 @@ const calendarDayLabels = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
 const monthPickerStartYear = 2016;
 const monthPickerEndYear = 2035;
 
-const monthPickerOptions = Array.from({ length: 12 }, (_, monthIndex) => ({
-  label: `${String(monthIndex + 1).padStart(2, "0")} - ${format(
-    new Date(2024, monthIndex, 1),
-    "MMMM",
-  )}`,
-  value: monthIndex,
-}));
-
-const yearPickerOptions = Array.from(
+const MONTH_PICKER_ITEM_HEIGHT = 44;
+const MONTH_PICKER_COLUMN_HEIGHT = MONTH_PICKER_ITEM_HEIGHT * 5;
+const MONTH_PICKER_MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_PICKER_MONTHS_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const MONTH_PICKER_YEARS = Array.from(
   { length: monthPickerEndYear - monthPickerStartYear + 1 },
-  (_, index) => monthPickerStartYear + index,
+  (_, i) => String(monthPickerStartYear + i),
 );
 
 function formatMonthYearLabel(date: Date) {
@@ -290,58 +285,49 @@ function formatSelectedCurrencyName(name: string) {
     .join(" ");
 }
 
-export default function CurrencySetupScreen() {
-  const [showFirstLaunchSplash, setShowFirstLaunchSplash] = useState(true);
+export default function AppEntryScreen() {
+  const [isShowingSplash, setIsShowingSplash] = useState(true);
+  const [homeCurrency, setHomeCurrency] = useState<Currency | null>(null);
 
   useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let isMounted = true;
 
-    async function runFirstLaunchSequence() {
-      const hasSeenFirstLaunchSplash = await AsyncStorage.getItem(
-        FIRST_LAUNCH_SPLASH_KEY,
-      );
+    const splashTimer = new Promise<void>((resolve) =>
+      setTimeout(resolve, SPLASH_DURATION_MS),
+    );
 
-      if (!isMounted) {
-        return;
-      }
+    const currencyLoad = AsyncStorage.getItem(HOME_CURRENCY_KEY)
+      .then((saved) =>
+        saved ? (currencies.find((c) => c.code === saved) ?? null) : null,
+      )
+      .catch(() => null);
 
-      if (hasSeenFirstLaunchSplash) {
-        setShowFirstLaunchSplash(false);
-        return;
-      }
-
-      timeoutId = setTimeout(() => {
-        AsyncStorage.setItem(FIRST_LAUNCH_SPLASH_KEY, "true").catch(() => {
-          // The intro should not block onboarding if local persistence fails.
-        });
-
-        if (isMounted) {
-          setShowFirstLaunchSplash(false);
-        }
-      }, FIRST_LAUNCH_SPLASH_DURATION_MS);
-    }
-
-    runFirstLaunchSequence().catch(() => {
+    Promise.all([splashTimer, currencyLoad]).then(([, currency]) => {
       if (isMounted) {
-        setShowFirstLaunchSplash(false);
+        setHomeCurrency(currency);
+        setIsShowingSplash(false);
       }
     });
 
     return () => {
       isMounted = false;
-
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
     };
   }, []);
 
-  if (showFirstLaunchSplash) {
+  const handleCurrencySelected = useCallback((currency: Currency) => {
+    setHomeCurrency(currency);
+    AsyncStorage.setItem(HOME_CURRENCY_KEY, currency.code).catch(() => {});
+  }, []);
+
+  if (isShowingSplash) {
     return <FirstLaunchSplashScreen />;
   }
 
-  return <CurrencySetupContent />;
+  if (homeCurrency) {
+    return <HomeEmptyListScreen currency={homeCurrency} />;
+  }
+
+  return <CurrencySetupContent onComplete={handleCurrencySelected} />;
 }
 
 function FirstLaunchSplashScreen() {
@@ -357,20 +343,19 @@ function FirstLaunchSplashScreen() {
   );
 }
 
-function CurrencySetupContent() {
+function CurrencySetupContent({
+  onComplete,
+}: {
+  onComplete: (currency: Currency) => void;
+}) {
   const [selectedCurrency, setSelectedCurrency] = useState<Currency | null>(
     null,
   );
-  const [homeCurrency, setHomeCurrency] = useState<Currency | null>(null);
   const [isCurrencyPickerOpen, setIsCurrencyPickerOpen] = useState(false);
 
   const currencyLabel = selectedCurrency
     ? `${formatSelectedCurrencyName(selectedCurrency.name)} (${selectedCurrency.code})`
     : "e.g Canadian dollar (CAD)";
-
-  if (homeCurrency) {
-    return <HomeEmptyListScreen currency={homeCurrency} />;
-  }
 
   return (
     <SafeAreaView edges={["top"]} style={styles.screen}>
@@ -413,7 +398,7 @@ function CurrencySetupContent() {
           disabled={!selectedCurrency}
           onPress={() => {
             if (selectedCurrency) {
-              setHomeCurrency(selectedCurrency);
+              onComplete(selectedCurrency);
             }
           }}
           style={[
@@ -448,7 +433,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   const router = useRouter();
   const [isCalendarView, setIsCalendarView] = useState(false);
   const [isMonthYearPickerOpen, setIsMonthYearPickerOpen] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState(new Date(2026, 0, 1));
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date());
   const insets = useSafeAreaInsets();
   const currencySymbol = currencySymbols[currency.code] ?? currency.code;
   const selectedMonthLabel = formatMonthYearLabel(selectedMonth);
@@ -666,6 +651,73 @@ function TransactionSummary({
   );
 }
 
+function MonthPickerColumn({
+  items,
+  label,
+  onSelect,
+  selectedIndex,
+}: {
+  items: string[];
+  label: string;
+  onSelect: (index: number) => void;
+  selectedIndex: number;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({
+      animated: false,
+      y: selectedIndex * MONTH_PICKER_ITEM_HEIGHT,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleScrollEnd = useCallback(
+    (e: { nativeEvent: { contentOffset: { y: number } } }) => {
+      const idx = Math.round(e.nativeEvent.contentOffset.y / MONTH_PICKER_ITEM_HEIGHT);
+      onSelect(Math.max(0, Math.min(items.length - 1, idx)));
+    },
+    [items.length, onSelect],
+  );
+
+  return (
+    <View style={styles.monthPickerColumnWrapper}>
+      <Text style={styles.monthPickerColumnLabel}>{label}</Text>
+      <View style={styles.monthPickerColumnInner}>
+        <ScrollView
+          ref={scrollRef}
+          bounces={false}
+          contentContainerStyle={styles.monthPickerScrollContent}
+          decelerationRate="fast"
+          onMomentumScrollEnd={handleScrollEnd}
+          onScrollEndDrag={handleScrollEnd}
+          showsVerticalScrollIndicator={false}
+          snapToInterval={MONTH_PICKER_ITEM_HEIGHT}
+        >
+          {items.map((item, i) => (
+            <View
+              key={item}
+              style={[
+                styles.monthPickerItem,
+                i === selectedIndex && styles.monthPickerItemSelected,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.monthPickerItemText,
+                  i === selectedIndex && styles.monthPickerItemTextSelected,
+                ]}
+              >
+                {item}
+              </Text>
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
 function MonthYearPicker({
   onClose,
   onSelectMonth,
@@ -678,83 +730,120 @@ function MonthYearPicker({
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const translateY = useRef(new Animated.Value(500)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+
   const [pickerMonth, setPickerMonth] = useState(selectedMonth.getMonth());
-  const [pickerYear, setPickerYear] = useState(selectedMonth.getFullYear());
+  const [pickerYear, setPickerYear] = useState(
+    Math.max(0, selectedMonth.getFullYear() - monthPickerStartYear),
+  );
+
+  const selectedMonthRef = useRef(selectedMonth);
+  selectedMonthRef.current = selectedMonth;
+
+  const displayText = `${MONTH_PICKER_MONTHS_FULL[pickerMonth]} ${monthPickerStartYear + pickerYear}`;
+
+  const closeSheet = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) onClose();
+    });
+  }, [backdropOpacity, onClose, translateY]);
 
   useEffect(() => {
     if (visible) {
-      setPickerMonth(selectedMonth.getMonth());
-      setPickerYear(selectedMonth.getFullYear());
+      const d = selectedMonthRef.current;
+      setPickerMonth(d.getMonth());
+      setPickerYear(Math.max(0, d.getFullYear() - monthPickerStartYear));
+      translateY.setValue(500);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
+        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
+      ]).start();
+    } else {
+      backdropOpacity.setValue(0);
+      translateY.setValue(500);
     }
-  }, [selectedMonth, visible]);
+  }, [backdropOpacity, translateY, visible]);
 
-  const updateSelectedMonth = useCallback(
-    (month: number, year: number) => {
-      onSelectMonth(new Date(year, month, 1));
-    },
-    [onSelectMonth],
-  );
+  const handleSave = useCallback(() => {
+    onSelectMonth(new Date(monthPickerStartYear + pickerYear, pickerMonth, 1));
+    closeSheet();
+  }, [closeSheet, onSelectMonth, pickerMonth, pickerYear]);
 
   return (
     <Modal
-      animationType="slide"
-      onRequestClose={onClose}
+      animationType="none"
+      onRequestClose={closeSheet}
       transparent
       visible={visible}
     >
-      <View style={styles.monthPickerBackdrop}>
-        <Pressable
-          accessibilityLabel="Close month picker"
-          accessibilityRole="button"
-          onPress={onClose}
-          style={styles.monthPickerDismissArea}
-        />
-        <View
-          style={[
-            styles.monthPickerSheet,
-            { paddingBottom: Math.max(insets.bottom, 8) },
-          ]}
+      <View style={styles.monthPickerRoot}>
+        <Animated.View
+          style={[styles.monthPickerBackdrop, { opacity: backdropOpacity }]}
         >
-          <View style={styles.monthPickerWheelRow}>
-            <Picker
-              itemStyle={styles.monthPickerItem}
-              onValueChange={(month) => {
-                if (typeof month !== "number") {
-                  return;
-                }
+          <Pressable
+            accessibilityLabel="Close month picker"
+            accessibilityRole="button"
+            onPress={closeSheet}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
 
-                setPickerMonth(month);
-                updateSelectedMonth(month, pickerYear);
-              }}
-              selectedValue={pickerMonth}
-              style={styles.monthPickerWheel}
-            >
-              {monthPickerOptions.map((option) => (
-                <Picker.Item
-                  key={option.value}
-                  label={option.label}
-                  value={option.value}
-                />
-              ))}
-            </Picker>
-            <Picker
-              itemStyle={styles.monthPickerItem}
-              onValueChange={(year) => {
-                if (typeof year !== "number") {
-                  return;
-                }
+        <View pointerEvents="box-none" style={styles.monthPickerContainer}>
+          <Animated.View
+            style={[
+              styles.monthPickerSheet,
+              { paddingBottom: Math.max(insets.bottom, 24) },
+              { transform: [{ translateY }] },
+            ]}
+          >
+            <View>
+              <View style={styles.monthPickerHeader}>
+                <Text style={styles.monthPickerTitle}>Month & Year</Text>
+                <Pressable
+                  accessibilityLabel="Close month picker"
+                  accessibilityRole="button"
+                  onPress={closeSheet}
+                  style={styles.monthPickerCloseButton}
+                >
+                  <MingCuteIcon
+                    color={figmaColors.grayNeutral["600"]}
+                    name="close-line"
+                    size={18}
+                  />
+                </Pressable>
+              </View>
+              <View style={styles.monthPickerDivider} />
+            </View>
 
-                setPickerYear(year);
-                updateSelectedMonth(pickerMonth, year);
-              }}
-              selectedValue={pickerYear}
-              style={styles.monthPickerWheel}
+            <Text style={styles.monthPickerDisplayText}>{displayText}</Text>
+
+            <View style={styles.monthPickerColumns}>
+              <MonthPickerColumn
+                items={MONTH_PICKER_MONTHS_SHORT}
+                label="Month"
+                onSelect={setPickerMonth}
+                selectedIndex={pickerMonth}
+              />
+              <MonthPickerColumn
+                items={MONTH_PICKER_YEARS}
+                label="Year"
+                onSelect={setPickerYear}
+                selectedIndex={pickerYear}
+              />
+            </View>
+
+            <Pressable
+              accessibilityRole="button"
+              onPress={handleSave}
+              style={styles.monthPickerSaveButton}
             >
-              {yearPickerOptions.map((year) => (
-                <Picker.Item key={year} label={String(year)} value={year} />
-              ))}
-            </Picker>
-          </View>
+              <Text style={styles.monthPickerSaveButtonText}>Save</Text>
+            </Pressable>
+          </Animated.View>
         </View>
       </View>
     </Modal>
@@ -773,20 +862,27 @@ export function CurrencyPicker({
   visible: boolean;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const translateY = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(500)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
 
-  const closeWithDrag = useCallback(() => {
-    Animated.timing(translateY, {
-      duration: 180,
-      toValue: 520,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
+  const closeSheet = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(translateY, {
+        duration: 220,
+        toValue: 600,
+        useNativeDriver: true,
+      }),
+      Animated.timing(backdropOpacity, {
+        duration: 220,
+        toValue: 0,
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
       if (finished) {
-        translateY.setValue(0);
         onClose();
       }
     });
-  }, [onClose, translateY]);
+  }, [backdropOpacity, onClose, translateY]);
 
   const resetSheetPosition = useCallback(() => {
     Animated.spring(translateY, {
@@ -816,7 +912,7 @@ export function CurrencyPicker({
             gestureState.dy > SHEET_CLOSE_DISTANCE ||
             gestureState.vy > 1.2
           ) {
-            closeWithDrag();
+            closeSheet();
             return;
           }
 
@@ -824,15 +920,31 @@ export function CurrencyPicker({
         },
         onPanResponderTerminate: resetSheetPosition,
       }),
-    [closeWithDrag, resetSheetPosition, translateY],
+    [closeSheet, resetSheetPosition, translateY],
   );
 
   useEffect(() => {
     if (visible) {
       setSearchQuery("");
-      translateY.setValue(0);
+      translateY.setValue(500);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, {
+          duration: 300,
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+        Animated.spring(translateY, {
+          bounciness: 0,
+          speed: 18,
+          toValue: 0,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      backdropOpacity.setValue(0);
+      translateY.setValue(500);
     }
-  }, [translateY, visible]);
+  }, [backdropOpacity, translateY, visible]);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredCurrencies = normalizedQuery
@@ -845,13 +957,14 @@ export function CurrencyPicker({
 
   return (
     <Modal
-      animationType="slide"
+      animationType="none"
       onDismiss={onDismiss}
-      onRequestClose={onClose}
+      onRequestClose={closeSheet}
       visible={visible}
     >
-      <View style={styles.pickerBackdrop}>
+      <View style={styles.pickerRoot}>
         <StatusBar style="light" />
+        <Animated.View style={[styles.pickerBackdrop, { opacity: backdropOpacity }]} />
         <SafeAreaView edges={["top"]} style={styles.pickerSafeArea}>
           <Animated.View
             style={[
@@ -876,7 +989,7 @@ export function CurrencyPicker({
                   accessibilityRole="button"
                   accessibilityLabel="Close currency picker"
                   hitSlop={12}
-                  onPress={onClose}
+                  onPress={closeSheet}
                   style={styles.closeButton}
                 >
                   <MingCuteIcon
@@ -1271,32 +1384,114 @@ const styles = StyleSheet.create({
   tabLabelActive: {
     color: figmaColors.blue["500"],
   },
-  monthPickerBackdrop: {
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
+  monthPickerRoot: {
     flex: 1,
-    justifyContent: "flex-end",
   },
-  monthPickerDismissArea: {
-    flex: 1,
+  monthPickerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: figmaColors.base.overlay,
+  },
+  monthPickerContainer: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
   },
   monthPickerSheet: {
-    backgroundColor: figmaColors.bg,
-    borderTopLeftRadius: 12,
-    borderTopRightRadius: 12,
-    overflow: "hidden",
+    backgroundColor: figmaColors.base.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    gap: 20,
+    paddingHorizontal: 20,
+    paddingTop: 24,
   },
-  monthPickerWheelRow: {
+  monthPickerHeader: {
+    alignItems: "center",
     flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 16,
   },
-  monthPickerWheel: {
+  monthPickerTitle: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 18,
+    letterSpacing: -0.2,
+  },
+  monthPickerCloseButton: {
+    alignItems: "center",
+    backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 999,
+    height: 36,
+    justifyContent: "center",
+    width: 36,
+  },
+  monthPickerDivider: {
+    backgroundColor: figmaColors.grayNeutral["200"],
+    height: StyleSheet.hairlineWidth,
+  },
+  monthPickerDisplayText: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 28,
+    letterSpacing: -0.5,
+    textAlign: "center",
+  },
+  monthPickerColumns: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  monthPickerColumnWrapper: {
+    alignItems: "center",
     flex: 1,
-    height: 216,
+    gap: 6,
+  },
+  monthPickerColumnLabel: {
+    color: figmaColors.grayNeutral["400"],
+    fontFamily: fontFamily.medium,
+    fontSize: 13,
+    letterSpacing: 0.1,
+  },
+  monthPickerColumnInner: {
+    backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 16,
+    height: MONTH_PICKER_COLUMN_HEIGHT,
+    overflow: "hidden",
+    width: "100%",
+  },
+  monthPickerScrollContent: {
+    paddingVertical: MONTH_PICKER_ITEM_HEIGHT * 2,
   },
   monthPickerItem: {
-    color: figmaColors.grayNeutral["900"],
-    fontFamily: fontFamily.regular,
-    fontSize: 20,
-    lineHeight: 24,
+    alignItems: "center",
+    borderRadius: 10,
+    height: MONTH_PICKER_ITEM_HEIGHT,
+    justifyContent: "center",
+    marginHorizontal: 6,
+  },
+  monthPickerItemSelected: {
+    backgroundColor: figmaColors.grayNeutral["900"],
+  },
+  monthPickerItemText: {
+    color: figmaColors.grayNeutral["400"],
+    fontFamily: fontFamily.medium,
+    fontSize: 16,
+  },
+  monthPickerItemTextSelected: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.bold,
+  },
+  monthPickerSaveButton: {
+    alignItems: "center",
+    backgroundColor: figmaColors.blue["500"],
+    borderRadius: 999,
+    height: 56,
+    justifyContent: "center",
+  },
+  monthPickerSaveButtonText: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.bold,
+    fontSize: 17,
+    letterSpacing: -0.2,
   },
   content: {
     flex: 1,
@@ -1386,9 +1581,12 @@ const styles = StyleSheet.create({
   continueTextSelected: {
     color: figmaColors.base.white,
   },
-  pickerBackdrop: {
-    backgroundColor: figmaColors.base.black,
+  pickerRoot: {
     flex: 1,
+  },
+  pickerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: figmaColors.base.overlay,
   },
   pickerSafeArea: {
     flex: 1,
