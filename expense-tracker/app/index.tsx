@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { format, getDay, getDaysInMonth, startOfMonth } from "date-fns";
+import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import {
@@ -26,6 +27,14 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Reanimated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
 import Svg, { Circle, ClipPath, Defs, G, Path, Rect } from "react-native-svg";
 
 import { figmaColors } from "@/constants/colors";
@@ -35,6 +44,14 @@ const HOME_CURRENCY_KEY = "europa:home-currency";
 const TRANSACTIONS_KEY = "europa:transactions";
 const SPLASH_DURATION_MS = 2500;
 const SHEET_CLOSE_DISTANCE = 120;
+const SWIPE_DELETE_REVEAL_WIDTH = 64;
+const SWIPE_PARTIAL_REVEAL_PERCENT = 0.25;
+const SWIPE_FULL_DELETE_PERCENT = 0.45;
+const SWIPE_FULL_DELETE_FLING_VELOCITY = -1_200;
+
+function triggerDeleteThresholdHaptic() {
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+}
 
 const rateCache: Record<string, { rates: Record<string, number>; ts: number }> = {};
 
@@ -73,6 +90,13 @@ type DayGroup = {
   date: Date;
   transactions: Transaction[];
   netCents: number;
+};
+
+type PendingDeletion = {
+  dateSection: string;
+  id: number;
+  originalIndex: number;
+  transaction: Transaction;
 };
 
 const DEFAULT_CATEGORY_COLORS: Record<string, string> = {
@@ -528,6 +552,9 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [tabBarHeight, setTabBarHeight] = useState(0);
   const [showToast, setShowToast] = useState(false);
+  const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion | null>(
+    null,
+  );
   const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({});
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -551,6 +578,58 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
     loadTransactions().finally(() => setIsRefreshing(false));
   }, [loadTransactions]);
 
+  const handleDeleteTransaction = useCallback(
+    async (transaction: Transaction) => {
+      const originalIndex = transactions.findIndex(
+        (item) => item.id === transaction.id,
+      );
+      if (originalIndex < 0) return;
+
+      const nextTransactions = transactions.filter(
+        (item) => item.id !== transaction.id,
+      );
+      setTransactions(nextTransactions);
+      setPendingDeletion({
+        dateSection: transaction.date.slice(0, 10),
+        id: Date.now(),
+        originalIndex,
+        transaction,
+      });
+
+      try {
+        await AsyncStorage.setItem(
+          TRANSACTIONS_KEY,
+          JSON.stringify(nextTransactions),
+        );
+      } catch {
+        setTransactions(transactions);
+        setPendingDeletion(null);
+      }
+    },
+    [transactions],
+  );
+
+  const handleUndoDelete = useCallback(async () => {
+    if (!pendingDeletion) return;
+
+    const restoredTransactions = [
+      ...transactions.slice(0, pendingDeletion.originalIndex),
+      pendingDeletion.transaction,
+      ...transactions.slice(pendingDeletion.originalIndex),
+    ];
+    setTransactions(restoredTransactions);
+    setPendingDeletion(null);
+
+    try {
+      await AsyncStorage.setItem(
+        TRANSACTIONS_KEY,
+        JSON.stringify(restoredTransactions),
+      );
+    } catch {
+      setTransactions(transactions);
+    }
+  }, [pendingDeletion, transactions]);
+
   useEffect(() => {
     if (recorded === "1" || recorded === "deleted") {
       setShowToast(true);
@@ -558,6 +637,12 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
       return () => clearTimeout(t);
     }
   }, [deletedType, recorded]);
+
+  useEffect(() => {
+    if (!pendingDeletion) return;
+    const timeout = setTimeout(() => setPendingDeletion(null), 5000);
+    return () => clearTimeout(timeout);
+  }, [pendingDeletion]);
 
   useEffect(() => {
     const hasForeign = transactions.some((tx) => tx.currencyCode !== currency.code);
@@ -760,6 +845,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
                       params: { transactionId: tx.id },
                     })
                   }
+                  onDelete={() => handleDeleteTransaction(tx)}
                   transaction={tx}
                 />
               ))}
@@ -809,16 +895,17 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
       <ToastNotification
         bottomOffset={tabBarHeight + 8}
         message={
-          recorded === "deleted"
-            ? `Your ${deletedType ?? "transaction"} has been deleted`
+          pendingDeletion || recorded === "deleted"
+            ? `Your ${pendingDeletion?.transaction.type ?? deletedType ?? "transaction"} has been deleted`
             : transactions[0]?.type === "income"
               ? "Your income has been recorded"
               : transactions[0]?.type === "transfer"
                 ? "Your transfer has been recorded"
                 : "Your expense has been recorded"
         }
-        variant={recorded === "deleted" ? "destructive" : "default"}
-        visible={showToast}
+        onAction={pendingDeletion ? handleUndoDelete : undefined}
+        variant={pendingDeletion || recorded === "deleted" ? "destructive" : "default"}
+        visible={showToast || pendingDeletion !== null}
       />
 
       <SearchOverlay
@@ -1014,12 +1101,14 @@ function TransactionRow({
   currencyCode,
   currencySymbol,
   exchangeRates,
+  onDelete,
   onPress,
   transaction,
 }: {
   currencyCode: string;
   currencySymbol: string;
   exchangeRates: Record<string, number>;
+  onDelete?: () => void;
   onPress: () => void;
   transaction: Transaction;
 }) {
@@ -1034,31 +1123,182 @@ function TransactionRow({
   const bgColor = transaction.categoryColor ?? categoryColor(transaction.categoryName);
   const title = transaction.description.trim() || transaction.categoryName;
   const displayCents = convertCents(transaction.amountCents, transaction.currencyCode, currencyCode, exchangeRates);
+  const [isDeleteActionExposed, setIsDeleteActionExposed] = useState(false);
+  const rowWidth = useSharedValue(0);
+  const rowHeight = useSharedValue(-1);
+  const translateX = useSharedValue(0);
+  const containerOpacity = useSharedValue(1);
+  const swipeStartX = useSharedValue(0);
+  const thresholdHapticTriggered = useSharedValue(false);
+  const deleteScalePop = useSharedValue(1);
+
+  const closeDeleteAction = useCallback(() => {
+    translateX.value = withSpring(0, { damping: 20, stiffness: 220 });
+    setIsDeleteActionExposed(false);
+  }, [translateX]);
+
+  const completeDeletion = useCallback(() => {
+    if (!onDelete) return;
+
+    setIsDeleteActionExposed(false);
+    translateX.value = withTiming(-rowWidth.value, { duration: 180 }, (finished) => {
+      if (!finished) return;
+      containerOpacity.value = withTiming(0, { duration: 120 });
+      rowHeight.value = withTiming(0, { duration: 200 }, (collapsed) => {
+        if (collapsed) runOnJS(onDelete)();
+      });
+    });
+  }, [containerOpacity, onDelete, rowHeight, rowWidth, translateX]);
+
+  const handlePress = useCallback(() => {
+    if (isDeleteActionExposed) {
+      closeDeleteAction();
+      return;
+    }
+    onPress();
+  }, [closeDeleteAction, isDeleteActionExposed, onPress]);
+
+  const handleRowLayout = useCallback(
+    (event: { nativeEvent: { layout: { height: number; width: number } } }) => {
+      rowWidth.value = event.nativeEvent.layout.width;
+      if (rowHeight.value < 0) {
+        rowHeight.value = event.nativeEvent.layout.height;
+      }
+    },
+    [rowHeight, rowWidth],
+  );
+
+  const panGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(Boolean(onDelete))
+        .activeOffsetX(-10)
+        .failOffsetY([-12, 12])
+        .onBegin(() => {
+          swipeStartX.value = translateX.value;
+          thresholdHapticTriggered.value = false;
+          deleteScalePop.value = 1;
+        })
+        .onUpdate((event) => {
+          const nextX = Math.min(
+            0,
+            Math.max(-rowWidth.value, swipeStartX.value + event.translationX),
+          );
+          translateX.value = nextX;
+
+          const fullDeleteThreshold = rowWidth.value * SWIPE_FULL_DELETE_PERCENT;
+          const isPastThreshold = -nextX >= fullDeleteThreshold;
+
+          if (isPastThreshold && !thresholdHapticTriggered.value) {
+            thresholdHapticTriggered.value = true;
+            deleteScalePop.value = withSpring(1.18, { damping: 10, stiffness: 380 });
+            runOnJS(triggerDeleteThresholdHaptic)();
+          } else if (!isPastThreshold && thresholdHapticTriggered.value) {
+            thresholdHapticTriggered.value = false;
+            deleteScalePop.value = withSpring(1, { damping: 15, stiffness: 300 });
+          }
+        })
+        .onEnd((event) => {
+          const partialRevealThreshold =
+            rowWidth.value * SWIPE_PARTIAL_REVEAL_PERCENT;
+          const fullDeleteThreshold =
+            rowWidth.value * SWIPE_FULL_DELETE_PERCENT;
+          const shouldDelete =
+            -translateX.value >= fullDeleteThreshold ||
+            event.velocityX <= SWIPE_FULL_DELETE_FLING_VELOCITY;
+
+          if (shouldDelete) {
+            runOnJS(completeDeletion)();
+            return;
+          }
+
+          if (-translateX.value >= partialRevealThreshold) {
+            translateX.value = withSpring(-SWIPE_DELETE_REVEAL_WIDTH, {
+              damping: 20,
+              stiffness: 220,
+            });
+            runOnJS(setIsDeleteActionExposed)(true);
+            return;
+          }
+
+          translateX.value = withSpring(0, { damping: 20, stiffness: 220 });
+          deleteScalePop.value = withSpring(1, { damping: 15, stiffness: 300 });
+          runOnJS(setIsDeleteActionExposed)(false);
+        })
+        .onFinalize(() => {
+          if (translateX.value === 0) {
+            runOnJS(setIsDeleteActionExposed)(false);
+          }
+        }),
+    [
+      completeDeletion,
+      deleteScalePop,
+      rowWidth,
+      swipeStartX,
+      thresholdHapticTriggered,
+      translateX,
+    ],
+  );
+
+  const rowStyle = useAnimatedStyle(() => ({
+    height: rowHeight.value > 0 ? rowHeight.value : undefined,
+    opacity: containerOpacity.value,
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  const deleteActionStyle = useAnimatedStyle(() => {
+    const fullDeleteThreshold =
+      rowWidth.value * SWIPE_FULL_DELETE_PERCENT || 1;
+    const progress = Math.min(1, Math.max(0, -translateX.value / fullDeleteThreshold));
+    return {
+      opacity: containerOpacity.value * (0.35 + progress * 0.65),
+      transform: [{ scale: (0.84 + progress * 0.16) * deleteScalePop.value }],
+    };
+  });
 
   return (
-    <Pressable
-      accessibilityLabel={`Edit ${title}`}
-      accessibilityRole="button"
-      onPress={onPress}
-      style={styles.txRow}
-    >
-      <View style={[styles.txIconCircle, { backgroundColor: bgColor }]}>
-        <Text style={styles.txEmoji}>
-          {transaction.categoryEmoji || "💰"}
-        </Text>
-      </View>
-      <View style={styles.txMeta}>
-        <Text numberOfLines={1} style={styles.txTitle}>{title}</Text>
-        <Text numberOfLines={1} style={styles.txAccount}>
-          {isTransfer && transaction.destinationAccountName
-            ? `${transaction.accountName} → ${transaction.destinationAccountName}`
-            : transaction.accountName}
-        </Text>
-      </View>
-      <Text style={[styles.txAmount, { color: amountColor }]}>
-        {prefix}{formatCents(displayCents, currencySymbol)}
-      </Text>
-    </Pressable>
+    <View style={styles.txSwipeRow}>
+      {onDelete ? (
+        <Reanimated.View style={[styles.txDeleteReveal, deleteActionStyle]}>
+          <Pressable
+            accessibilityLabel={`Delete ${title}`}
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={completeDeletion}
+            style={styles.txDeleteButton}
+          >
+            <TrashIcon color={figmaColors.error["500"]} />
+          </Pressable>
+        </Reanimated.View>
+      ) : null}
+      <GestureDetector gesture={panGesture}>
+        <Reanimated.View onLayout={handleRowLayout} style={rowStyle}>
+          <Pressable
+            accessibilityLabel={`Edit ${title}`}
+            accessibilityRole="button"
+            onPress={handlePress}
+            style={styles.txRow}
+          >
+            <View style={[styles.txIconCircle, { backgroundColor: bgColor }]}>
+              <Text style={styles.txEmoji}>
+                {transaction.categoryEmoji || "💰"}
+              </Text>
+            </View>
+            <View style={styles.txMeta}>
+              <Text numberOfLines={1} style={styles.txTitle}>{title}</Text>
+              <Text numberOfLines={1} style={styles.txAccount}>
+                {isTransfer && transaction.destinationAccountName
+                  ? `${transaction.accountName} → ${transaction.destinationAccountName}`
+                  : transaction.accountName}
+              </Text>
+            </View>
+            <Text style={[styles.txAmount, { color: amountColor }]}>
+              {prefix}{formatCents(displayCents, currencySymbol)}
+            </Text>
+          </Pressable>
+        </Reanimated.View>
+      </GestureDetector>
+    </View>
   );
 }
 
@@ -1077,12 +1317,12 @@ function ToastCheckIcon() {
   );
 }
 
-function ToastTrashIcon() {
+function TrashIcon({ color }: { color: string }) {
   return (
     <Svg fill="none" height={16} viewBox="0 0 24 24" width={16}>
       <Path
         d="M14.28 2a2 2 0 0 1 1.897 1.368L16.72 5H20a1 1 0 1 1 0 2l-.003.071-.867 12.143A3 3 0 0 1 16.138 22H7.862a3 3 0 0 1-2.992-2.786L4.003 7.07A1.01 1.01 0 0 1 4 7a1 1 0 0 1 0-2h3.28l.543-1.632A2 2 0 0 1 9.721 2zM9 10a1 1 0 0 0-.993.883L8 11v6a1 1 0 0 0 1.993.117L10 17v-6a1 1 0 0 0-1-1m6 0a1 1 0 0 0-1 1v6a1 1 0 1 0 2 0v-6a1 1 0 0 0-1-1m-.72-6H9.72l-.333 1h5.226z"
-        fill={figmaColors.base.white}
+        fill={color}
       />
     </Svg>
   );
@@ -1091,11 +1331,13 @@ function ToastTrashIcon() {
 function ToastNotification({
   bottomOffset,
   message,
+  onAction,
   variant = "default",
   visible,
 }: {
   bottomOffset: number;
   message: string;
+  onAction?: () => void;
   variant?: "default" | "destructive";
   visible: boolean;
 }) {
@@ -1118,15 +1360,29 @@ function ToastNotification({
 
   return (
     <Animated.View
-      pointerEvents="none"
+      pointerEvents={onAction ? "auto" : "none"}
       style={[
         styles.toast,
         variant === "destructive" ? styles.toastDestructive : null,
         { bottom: bottomOffset, opacity, transform: [{ translateY }] },
       ]}
     >
-      {variant === "destructive" ? <ToastTrashIcon /> : <ToastCheckIcon />}
+      {variant === "destructive" ? (
+        <TrashIcon color={figmaColors.base.white} />
+      ) : (
+        <ToastCheckIcon />
+      )}
       <Text style={styles.toastText}>{message}</Text>
+      {onAction ? (
+        <Pressable
+          accessibilityLabel="Undo transaction deletion"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={onAction}
+        >
+          <Text style={styles.toastActionText}>Undo</Text>
+        </Pressable>
+      ) : null}
     </Animated.View>
   );
 }
@@ -2388,10 +2644,32 @@ const styles = StyleSheet.create({
   },
   txRow: {
     alignItems: "center",
+    backgroundColor: figmaColors.bg,
     flexDirection: "row",
     gap: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
+  },
+  txSwipeRow: {
+    overflow: "hidden",
+    position: "relative",
+  },
+  txDeleteReveal: {
+    alignItems: "center",
+    bottom: 0,
+    justifyContent: "center",
+    position: "absolute",
+    right: 0,
+    top: 0,
+    width: SWIPE_DELETE_REVEAL_WIDTH,
+  },
+  txDeleteButton: {
+    alignItems: "center",
+    backgroundColor: figmaColors.error["100"],
+    borderRadius: 999,
+    height: 32,
+    justifyContent: "center",
+    width: 32,
   },
   txIconCircle: {
     alignItems: "center",
@@ -2441,6 +2719,12 @@ const styles = StyleSheet.create({
   toastText: {
     color: figmaColors.base.white,
     fontFamily: fontFamily.medium,
+    fontSize: 12,
+    letterSpacing: -0.1,
+  },
+  toastActionText: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.bold,
     fontSize: 12,
     letterSpacing: -0.1,
   },
