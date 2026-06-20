@@ -39,6 +39,21 @@
           "imageWidth": 284,
           "resizeMode": "contain"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Europa to access your photos so you can attach images to transactions.",
+          "cameraPermission": "Allow Europa to use your camera so you can photograph receipts.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Europa to show your recent photos for transaction attachments.",
+          "savePhotosPermission": "Allow Europa to save captured photos."
+        }
       ]
     ],
     "extra": {

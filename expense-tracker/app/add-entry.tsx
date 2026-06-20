@@ -1,9 +1,13 @@
 import { format } from "date-fns";
+import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
+import * as MediaLibrary from "expo-media-library";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
+  Dimensions,
   KeyboardAvoidingView,
   Modal,
   PanResponder,
@@ -363,6 +367,16 @@ type AccountGroupData = {
   accounts: Account[];
 };
 
+type SelectedImage = {
+  id: string;
+  uri: string;
+  width: number;
+  height: number;
+  fileName?: string | null;
+  mimeType?: string | null;
+  source: "recent" | "gallery" | "camera";
+};
+
 const accountGroupOrder: AccountGroup[] = [
   "Cash",
   "Accounts",
@@ -537,6 +551,29 @@ function ChevronDownIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={2}
+      />
+    </Svg>
+  );
+}
+
+function CameraIcon({ size = 28 }: { size?: number }) {
+  return (
+    <Svg fill="none" height={size} viewBox="0 0 24 24" width={size}>
+      <Path
+        d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
+        stroke={figmaColors.grayNeutral["400"]}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.75}
+      />
+      <Circle
+        cx="12"
+        cy="13"
+        r="4"
+        stroke={figmaColors.grayNeutral["400"]}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.75}
       />
     </Svg>
   );
@@ -2776,6 +2813,228 @@ function AmountInputSheet({
   );
 }
 
+const PHOTO_TILE_SIZE = Math.floor((Dimensions.get("window").width - 32 - 8) / 4);
+
+function ImageUploadBottomSheet({
+  initialImages,
+  onClose,
+  onConfirm,
+  visible,
+}: {
+  initialImages: SelectedImage[];
+  onClose: () => void;
+  onConfirm: (images: SelectedImage[]) => void;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const translateY = useRef(new Animated.Value(600)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const [selected, setSelected] = useState<SelectedImage[]>([]);
+  const [recentAssets, setRecentAssets] = useState<MediaLibrary.Asset[]>([]);
+
+  const closeSheet = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+    ]).start(({ finished }) => { if (finished) onClose(); });
+  }, [backdropOpacity, onClose, translateY]);
+
+  useEffect(() => {
+    if (visible) {
+      setSelected(initialImages);
+      translateY.setValue(600);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
+        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
+      ]).start();
+      loadRecent();
+    } else {
+      backdropOpacity.setValue(0);
+      translateY.setValue(600);
+    }
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadRecent() {
+    const { status } = await MediaLibrary.requestPermissionsAsync();
+    if (status !== "granted") return;
+    const { assets } = await MediaLibrary.getAssetsAsync({
+      first: 20,
+      mediaType: MediaLibrary.MediaType.photo,
+      sortBy: MediaLibrary.SortBy.creationTime,
+    });
+    setRecentAssets(assets);
+  }
+
+  async function handleCamera() {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") return;
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const a = result.assets[0];
+      setSelected((prev) => [
+        ...prev,
+        {
+          id: a.assetId ?? `camera-${a.uri}`,
+          uri: a.uri,
+          width: a.width,
+          height: a.height,
+          fileName: a.fileName,
+          mimeType: a.mimeType,
+          source: "camera",
+        },
+      ]);
+    }
+  }
+
+  async function handleAllPhotos() {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsMultipleSelection: true,
+      quality: 0.85,
+    });
+    if (!result.canceled) {
+      const newImgs: SelectedImage[] = result.assets.map((a) => ({
+        id: a.assetId ?? `gallery-${a.uri}`,
+        uri: a.uri,
+        width: a.width,
+        height: a.height,
+        fileName: a.fileName,
+        mimeType: a.mimeType,
+        source: "gallery" as const,
+      }));
+      setSelected((prev) => {
+        const existingIds = new Set(prev.map((i) => i.id));
+        return [...prev, ...newImgs.filter((i) => !existingIds.has(i.id))];
+      });
+    }
+  }
+
+  function toggleAsset(asset: MediaLibrary.Asset) {
+    setSelected((prev) => {
+      const exists = prev.find((i) => i.id === asset.id);
+      if (exists) return prev.filter((i) => i.id !== asset.id);
+      return [
+        ...prev,
+        {
+          id: asset.id,
+          uri: asset.uri,
+          width: asset.width,
+          height: asset.height,
+          fileName: asset.filename,
+          source: "recent" as const,
+        },
+      ];
+    });
+  }
+
+  const addLabel =
+    selected.length > 0
+      ? `Add ${selected.length} image${selected.length > 1 ? "s" : ""}`
+      : "Add images";
+
+  return (
+    <Modal animationType="none" onRequestClose={closeSheet} transparent visible={visible}>
+      <View style={styles.imgUploadRoot}>
+        <Animated.View style={[styles.imgUploadBackdrop, { opacity: backdropOpacity }]}>
+          <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
+        </Animated.View>
+        <View pointerEvents="box-none" style={styles.imgUploadContainer}>
+          <Animated.View
+            style={[
+              styles.imgUploadSheet,
+              { paddingBottom: Math.max(insets.bottom, 20) },
+              { transform: [{ translateY }] },
+            ]}
+          >
+            {/* Handle */}
+            <View style={styles.imgUploadHandle} />
+
+            {/* Header */}
+            <View style={styles.imgUploadHeader}>
+              <Text style={styles.imgUploadTitle}>Upload image</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={handleAllPhotos}
+              >
+                <Text style={styles.imgUploadAllPhotos}>All Photos</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.imgUploadDivider} />
+
+            {/* Horizontal photo row: camera tile + recent photos */}
+            <ScrollView
+              contentContainerStyle={styles.imgUploadRow}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.imgUploadRowScroll}
+            >
+              {/* Camera tile */}
+              <Pressable
+                accessibilityLabel="Take photo"
+                accessibilityRole="button"
+                onPress={handleCamera}
+                style={styles.imgUploadCameraTile}
+              >
+                <CameraIcon size={PHOTO_TILE_SIZE * 0.38} />
+              </Pressable>
+
+              {/* Recent photo tiles */}
+              {recentAssets.map((asset) => {
+                const isSelected = selected.some((i) => i.id === asset.id);
+                return (
+                  <Pressable
+                    key={asset.id}
+                    onPress={() => toggleAsset(asset)}
+                    style={styles.imgUploadPhotoTile}
+                  >
+                    <Image
+                      contentFit="cover"
+                      source={{ uri: asset.uri }}
+                      style={styles.imgUploadPhotoThumb}
+                    />
+                    {/* Selection circle */}
+                    <View style={[
+                      styles.imgUploadSelectCircle,
+                      isSelected && styles.imgUploadSelectCircleActive,
+                    ]}>
+                      {isSelected && (
+                        <Text style={styles.imgUploadSelectCheck}>✓</Text>
+                      )}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            {/* Add images button */}
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => { onConfirm(selected); closeSheet(); }}
+              style={[
+                styles.imgUploadAddBtn,
+                selected.length > 0 && styles.imgUploadAddBtnActive,
+              ]}
+            >
+              <Text style={[
+                styles.imgUploadAddBtnText,
+                selected.length > 0 && styles.imgUploadAddBtnTextActive,
+              ]}>
+                {addLabel}
+              </Text>
+            </Pressable>
+          </Animated.View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export default function AddEntryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -2802,6 +3061,8 @@ export default function AddEntryScreen() {
   const [isAccountPickerOpen, setIsAccountPickerOpen] = useState(false);
   const [isAccountsEditOpen, setIsAccountsEditOpen] = useState(false);
   const [isCreateAccountOpen, setIsCreateAccountOpen] = useState(false);
+  const [isImageUploadOpen, setIsImageUploadOpen] = useState(false);
+  const [transactionImages, setTransactionImages] = useState<SelectedImage[]>([]);
 
   const currencySymbol = currencySymbols[selectedCurrency.code] ?? selectedCurrency.code;
   const hasAmount = amountCents > 0;
@@ -2911,6 +3172,47 @@ export default function AddEntryScreen() {
               <Text style={styles.optionPillAccentText}>{recurringOption}</Text>
             </Pressable>
           </View>
+
+          <View style={styles.optionRow}>
+            <Text style={styles.optionLabel}>Attach image (optional)</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setIsImageUploadOpen(true)}
+              style={styles.optionPillDefault}
+            >
+              <Text style={styles.optionPillDefaultText}>Upload</Text>
+            </Pressable>
+          </View>
+
+          {transactionImages.length > 0 && (
+            <ScrollView
+              contentContainerStyle={styles.attachedImagesRow}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.attachedImagesScroll}
+            >
+              {transactionImages.map((img) => (
+                <View key={img.id} style={styles.attachedImageWrap}>
+                  <Image
+                    contentFit="cover"
+                    source={{ uri: img.uri }}
+                    style={styles.attachedImageThumb}
+                  />
+                  <Pressable
+                    accessibilityLabel="Remove image"
+                    accessibilityRole="button"
+                    hitSlop={6}
+                    onPress={() =>
+                      setTransactionImages((prev) => prev.filter((i) => i.id !== img.id))
+                    }
+                    style={styles.attachedImageRemove}
+                  >
+                    <Text style={styles.attachedImageRemoveText}>✕</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+          )}
 
         </View>
       </ScrollView>
@@ -3030,6 +3332,16 @@ export default function AddEntryScreen() {
           setRecurringOption(`Every ${n} ${label}`);
         }}
         visible={isCustomIntervalOpen}
+      />
+
+      <ImageUploadBottomSheet
+        initialImages={transactionImages}
+        onClose={() => setIsImageUploadOpen(false)}
+        onConfirm={(images) => {
+          setTransactionImages(images);
+          setIsImageUploadOpen(false);
+        }}
+        visible={isImageUploadOpen}
       />
     </SafeAreaView>
   );
@@ -3953,5 +4265,158 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.bold,
     fontSize: 17,
     letterSpacing: -0.2,
+  },
+  imgUploadRoot: {
+    flex: 1,
+  },
+  imgUploadBackdrop: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: figmaColors.base.overlay,
+  },
+  imgUploadContainer: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+  },
+  imgUploadSheet: {
+    backgroundColor: figmaColors.base.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  imgUploadHandle: {
+    alignSelf: "center",
+    backgroundColor: figmaColors.grayNeutral["300"],
+    borderRadius: 999,
+    height: 4,
+    marginBottom: 16,
+    width: 36,
+  },
+  imgUploadHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  imgUploadTitle: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 17,
+    letterSpacing: -0.2,
+  },
+  imgUploadAllPhotos: {
+    color: figmaColors.blue["500"],
+    fontFamily: fontFamily.medium,
+    fontSize: 15,
+    letterSpacing: -0.15,
+  },
+  imgUploadDivider: {
+    backgroundColor: figmaColors.grayNeutral["100"],
+    height: 1,
+    marginBottom: 16,
+  },
+  imgUploadRowScroll: {
+    marginBottom: 20,
+  },
+  imgUploadRow: {
+    gap: 8,
+    paddingRight: 8,
+  },
+  imgUploadCameraTile: {
+    alignItems: "center",
+    backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 12,
+    height: PHOTO_TILE_SIZE,
+    justifyContent: "center",
+    width: PHOTO_TILE_SIZE,
+  },
+  imgUploadPhotoTile: {
+    borderRadius: 12,
+    height: PHOTO_TILE_SIZE,
+    overflow: "hidden",
+    width: PHOTO_TILE_SIZE,
+  },
+  imgUploadPhotoThumb: {
+    height: PHOTO_TILE_SIZE,
+    width: PHOTO_TILE_SIZE,
+  },
+  imgUploadSelectCircle: {
+    alignItems: "center",
+    borderColor: figmaColors.base.white,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    height: 22,
+    justifyContent: "center",
+    position: "absolute",
+    right: 6,
+    top: 6,
+    width: 22,
+  },
+  imgUploadSelectCircleActive: {
+    backgroundColor: figmaColors.blue["500"],
+    borderColor: figmaColors.blue["500"],
+  },
+  imgUploadSelectCheck: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.bold,
+    fontSize: 12,
+  },
+  imgUploadAddBtn: {
+    alignItems: "center",
+    backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 999,
+    height: 52,
+    justifyContent: "center",
+  },
+  imgUploadAddBtnActive: {
+    backgroundColor: figmaColors.blue["500"],
+  },
+  imgUploadAddBtnText: {
+    color: figmaColors.grayNeutral["400"],
+    fontFamily: fontFamily.bold,
+    fontSize: 16,
+    letterSpacing: -0.2,
+  },
+  imgUploadAddBtnTextActive: {
+    color: figmaColors.base.white,
+  },
+  attachedImagesScroll: {
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  attachedImagesRow: {
+    gap: 10,
+    paddingRight: 4,
+  },
+  attachedImageWrap: {
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  attachedImageThumb: {
+    borderRadius: 12,
+    height: 110,
+    width: 110,
+  },
+  attachedImageRemove: {
+    alignItems: "center",
+    backgroundColor: figmaColors.grayNeutral["700"],
+    borderRadius: 999,
+    height: 22,
+    justifyContent: "center",
+    position: "absolute",
+    right: 6,
+    top: 6,
+    width: 22,
+  },
+  attachedImageRemoveText: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.bold,
+    fontSize: 10,
   },
 });
