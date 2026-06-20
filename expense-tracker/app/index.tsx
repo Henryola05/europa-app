@@ -690,7 +690,12 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
       </View>
 
       {isCalendarView ? (
-        <CalendarMonthGrid selectedMonth={selectedMonth} />
+        <CalendarMonthGrid
+          currencyCode={currency.code}
+          exchangeRates={exchangeRates}
+          monthTransactions={monthTransactions}
+          selectedMonth={selectedMonth}
+        />
       ) : monthTransactions.length === 0 ? (
         <EmptyLogState />
       ) : (
@@ -1050,7 +1055,24 @@ function ToastNotification({
   );
 }
 
-function CalendarMonthGrid({ selectedMonth }: { selectedMonth: Date }) {
+function formatCalendarAmount(cents: number, symbol: string): string {
+  const abs = Math.abs(cents);
+  if (abs >= 1_000_000_00) return `${symbol}${(abs / 1_000_000_00).toFixed(1)}M`;
+  if (abs >= 1_000_00) return `${symbol}${(abs / 1_000_00).toFixed(1)}K`;
+  return `${symbol}${(abs / 100).toFixed(0)}`;
+}
+
+function CalendarMonthGrid({
+  currencyCode,
+  exchangeRates,
+  monthTransactions,
+  selectedMonth,
+}: {
+  currencyCode: string;
+  exchangeRates: Record<string, number>;
+  monthTransactions: Transaction[];
+  selectedMonth: Date;
+}) {
   const calendarDays = getCalendarDays(
     selectedMonth.getFullYear(),
     selectedMonth.getMonth(),
@@ -1058,6 +1080,19 @@ function CalendarMonthGrid({ selectedMonth }: { selectedMonth: Date }) {
   const calendarRows = Array.from({ length: 5 }, (_, rowIndex) =>
     calendarDays.slice(rowIndex * 7, rowIndex * 7 + 7),
   );
+
+  const dayTotals = useMemo(() => {
+    const map = new Map<number, { inc: number; exp: number }>();
+    for (const tx of monthTransactions) {
+      const day = new Date(tx.date).getDate();
+      const cents = convertCents(tx.amountCents, tx.currencyCode, currencyCode, exchangeRates);
+      const entry = map.get(day) ?? { inc: 0, exp: 0 };
+      if (tx.type === "income") entry.inc += cents;
+      else if (tx.type === "expense") entry.exp += cents;
+      map.set(day, entry);
+    }
+    return map;
+  }, [monthTransactions, currencyCode, exchangeRates]);
 
   return (
     <View style={styles.calendarContainer}>
@@ -1072,17 +1107,32 @@ function CalendarMonthGrid({ selectedMonth }: { selectedMonth: Date }) {
       <View style={styles.calendarGrid}>
         {calendarRows.map((week, rowIndex) => (
           <View key={`week-${rowIndex}`} style={styles.calendarRow}>
-            {week.map((day, columnIndex) => (
-              <View
-                key={`${rowIndex}-${columnIndex}`}
-                style={[
-                  styles.calendarDayCell,
-                  day === null && styles.calendarDayCellHidden,
-                ]}
-              >
-                <Text style={styles.calendarDayText}>{day ?? 31}</Text>
-              </View>
-            ))}
+            {week.map((day, columnIndex) => {
+              const totals = day !== null ? dayTotals.get(day) : undefined;
+              return (
+                <View
+                  key={`${rowIndex}-${columnIndex}`}
+                  style={[
+                    styles.calendarDayCell,
+                    day === null && styles.calendarDayCellHidden,
+                  ]}
+                >
+                  <Text style={styles.calendarDayText}>{day ?? 31}</Text>
+                  <View style={styles.calendarDayAmounts}>
+                    {totals && totals.inc > 0 && (
+                      <Text style={styles.calendarDayIncome}>
+                        {formatCalendarAmount(totals.inc, "")}
+                      </Text>
+                    )}
+                    {totals && totals.exp > 0 && (
+                      <Text style={styles.calendarDayExpense}>
+                        {formatCalendarAmount(totals.exp, "")}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
           </View>
         ))}
       </View>
@@ -1791,9 +1841,10 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     flex: 1,
     height: 76,
+    justifyContent: "space-between",
     minWidth: 0,
-    paddingHorizontal: 6,
-    paddingTop: 8,
+    overflow: "hidden",
+    padding: 6,
   },
   calendarDayCellHidden: {
     opacity: 0,
@@ -1803,6 +1854,22 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.bold,
     fontSize: 12,
     lineHeight: 16,
+  },
+  calendarDayAmounts: {
+    alignItems: "flex-end",
+    gap: 4,
+  },
+  calendarDayIncome: {
+    color: figmaColors.success["600"],
+    fontFamily: fontFamily.medium,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  calendarDayExpense: {
+    color: figmaColors.error["600"],
+    fontFamily: fontFamily.medium,
+    fontSize: 10,
+    lineHeight: 14,
   },
   emptyStateContainer: {
     alignItems: "center",

@@ -5,7 +5,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Dimensions,
@@ -360,6 +360,14 @@ type Account = {
   name: string;
   group: AccountGroup;
   balanceCents: number;
+  openingBalanceCents: number;
+};
+
+type StoredTransaction = {
+  id: string;
+  type: "income" | "expense" | "transfer";
+  amountCents: number;
+  accountName: string;
 };
 
 type AccountGroupData = {
@@ -395,14 +403,27 @@ const accountGroupOrder: AccountGroup[] = [
 
 const ACCOUNT_ITEM_HEIGHT = 52;
 const TRANSACTIONS_KEY = "europa:transactions";
+const ACCOUNTS_KEY = "europa:accounts";
 
 const defaultAccounts: Account[] = [
-  { id: "cash-wallet", name: "Cash Wallet", group: "Cash", balanceCents: 325000 },
-  { id: "chase", name: "Chase", group: "Accounts", balanceCents: 1248000 },
-  { id: "wells-fargo", name: "Wells Fargo", group: "Accounts", balanceCents: 792000 },
-  { id: "venmo", name: "Venmo", group: "Mobile Money", balanceCents: 185000 },
-  { id: "cash-app", name: "Cash App", group: "Mobile Money", balanceCents: 230000 },
+  { id: "cash-wallet", name: "Cash Wallet", group: "Cash", balanceCents: 325000, openingBalanceCents: 325000 },
+  { id: "chase", name: "Chase", group: "Accounts", balanceCents: 1248000, openingBalanceCents: 1248000 },
+  { id: "wells-fargo", name: "Wells Fargo", group: "Accounts", balanceCents: 792000, openingBalanceCents: 792000 },
+  { id: "venmo", name: "Venmo", group: "Mobile Money", balanceCents: 185000, openingBalanceCents: 185000 },
+  { id: "cash-app", name: "Cash App", group: "Mobile Money", balanceCents: 230000, openingBalanceCents: 230000 },
 ];
+
+function applyTransactionsToAccounts(accounts: Account[], transactions: StoredTransaction[]): Account[] {
+  return accounts.map((account) => {
+    const net = transactions.reduce((sum, tx) => {
+      if (tx.accountName !== account.name) return sum;
+      if (tx.type === "income") return sum + tx.amountCents;
+      if (tx.type === "expense") return sum - tx.amountCents;
+      return sum;
+    }, 0);
+    return { ...account, balanceCents: account.openingBalanceCents + net };
+  });
+}
 
 function groupAccounts(accounts: Account[]): AccountGroupData[] {
   return accountGroupOrder
@@ -3059,6 +3080,30 @@ export default function AddEntryScreen() {
     useState<ExpenseCategory | null>(null);
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
   const [localAccounts, setLocalAccounts] = useState<Account[]>(() => [...defaultAccounts]);
+  const [allTransactions, setAllTransactions] = useState<StoredTransaction[]>([]);
+
+  useEffect(() => {
+    Promise.all([
+      AsyncStorage.getItem(ACCOUNTS_KEY),
+      AsyncStorage.getItem(TRANSACTIONS_KEY),
+    ]).then(([accountData, txData]) => {
+      if (accountData) {
+        const parsed = JSON.parse(accountData) as Account[];
+        // migrate: fill openingBalanceCents for accounts saved before this field existed
+        setLocalAccounts(parsed.map((a) => ({ ...a, openingBalanceCents: a.openingBalanceCents ?? a.balanceCents })));
+      }
+      if (txData) setAllTransactions(JSON.parse(txData) as StoredTransaction[]);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.setItem(ACCOUNTS_KEY, JSON.stringify(localAccounts)).catch(() => {});
+  }, [localAccounts]);
+
+  const displayAccounts = useMemo(
+    () => applyTransactionsToAccounts(localAccounts, allTransactions),
+    [localAccounts, allTransactions],
+  );
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [isAccountPickerOpen, setIsAccountPickerOpen] = useState(false);
   const [isAccountsEditOpen, setIsAccountsEditOpen] = useState(false);
@@ -3105,6 +3150,7 @@ export default function AddEntryScreen() {
       const existing = await AsyncStorage.getItem(TRANSACTIONS_KEY);
       const list = existing ? (JSON.parse(existing) as typeof transaction[]) : [];
       await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify([transaction, ...list]));
+
     } catch {
       // silently continue — don't block navigation on storage failure
     }
@@ -3283,7 +3329,7 @@ export default function AddEntryScreen() {
       />
 
       <AccountPickerSheet
-        accounts={localAccounts}
+        accounts={displayAccounts}
         onClose={() => setIsAccountPickerOpen(false)}
         onEditAccounts={() => {
           setIsAccountPickerOpen(false);
@@ -3299,7 +3345,7 @@ export default function AddEntryScreen() {
       />
 
       <AccountsBottomSheet
-        groups={groupAccounts(localAccounts)}
+        groups={groupAccounts(displayAccounts)}
         onClose={() => setIsAccountsEditOpen(false)}
         onNewAccount={() => {
           setIsAccountsEditOpen(false);
@@ -3321,11 +3367,13 @@ export default function AddEntryScreen() {
         groups={accountGroupOrder}
         onClose={() => setIsCreateAccountOpen(false)}
         onSubmit={(values) => {
+          const openingCents = Math.round(values.balance * 100);
           const account: Account = {
             id: Date.now().toString(36),
             name: values.name,
             group: values.groupId,
-            balanceCents: Math.round(values.balance * 100),
+            balanceCents: openingCents,
+            openingBalanceCents: openingCents,
           };
           setLocalAccounts((prev) => [...prev, account]);
           setIsCreateAccountOpen(false);
