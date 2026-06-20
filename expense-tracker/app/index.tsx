@@ -337,16 +337,14 @@ function formatSelectedCurrencyName(name: string) {
     .join(" ");
 }
 
+let appSplashDone = false;
+
 export default function AppEntryScreen() {
-  const [isShowingSplash, setIsShowingSplash] = useState(true);
+  const [isShowingSplash, setIsShowingSplash] = useState(!appSplashDone);
   const [homeCurrency, setHomeCurrency] = useState<Currency | null>(null);
 
   useEffect(() => {
     let isMounted = true;
-
-    const splashTimer = new Promise<void>((resolve) =>
-      setTimeout(resolve, SPLASH_DURATION_MS),
-    );
 
     const currencyLoad = AsyncStorage.getItem(HOME_CURRENCY_KEY)
       .then((saved) =>
@@ -354,12 +352,22 @@ export default function AppEntryScreen() {
       )
       .catch(() => null);
 
-    Promise.all([splashTimer, currencyLoad]).then(([, currency]) => {
-      if (isMounted) {
-        setHomeCurrency(currency);
-        setIsShowingSplash(false);
-      }
-    });
+    if (appSplashDone) {
+      currencyLoad.then((currency) => {
+        if (isMounted) setHomeCurrency(currency);
+      });
+    } else {
+      const splashTimer = new Promise<void>((resolve) =>
+        setTimeout(resolve, SPLASH_DURATION_MS),
+      );
+      Promise.all([splashTimer, currencyLoad]).then(([, currency]) => {
+        if (isMounted) {
+          appSplashDone = true;
+          setHomeCurrency(currency);
+          setIsShowingSplash(false);
+        }
+      });
+    }
 
     return () => {
       isMounted = false;
@@ -525,6 +533,21 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
     return { incomeCents: inc, expenseCents: exp, netCents: inc - exp };
   }, [monthTransactions]);
 
+  const lastMonthNetCents = useMemo(() => {
+    const prev = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() - 1, 1);
+    const prevTxs = transactions.filter((tx) => {
+      const d = new Date(tx.date);
+      return d.getFullYear() === prev.getFullYear() && d.getMonth() === prev.getMonth();
+    });
+    if (prevTxs.length === 0) return null;
+    let inc = 0, exp = 0;
+    for (const tx of prevTxs) {
+      if (tx.type === "income") inc += tx.amountCents;
+      else if (tx.type === "expense") exp += tx.amountCents;
+    }
+    return inc - exp;
+  }, [transactions, selectedMonth]);
+
   const dayGroups = useMemo<DayGroup[]>(() => {
     const map = new Map<string, Transaction[]>();
     for (const tx of monthTransactions) {
@@ -547,6 +570,12 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   const netAbsCents = Math.abs(netCents);
   const netWhole = `${netCents < 0 ? "−" : ""}${currencySymbol}${Math.floor(netAbsCents / 100).toLocaleString()}.`;
   const netFrac = String(netAbsCents % 100).padStart(2, "0");
+
+  const vsLastMonth = useMemo(() => {
+    if (lastMonthNetCents === null || lastMonthNetCents === 0) return null;
+    const pct = Math.round(((netCents - lastMonthNetCents) / Math.abs(lastMonthNetCents)) * 100);
+    return { pct, up: pct >= 0 };
+  }, [netCents, lastMonthNetCents]);
 
   return (
     <SafeAreaView edges={["top"]} style={styles.homeScreen}>
@@ -587,7 +616,29 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
             <Text style={styles.amountWhole}>{netWhole}</Text>
             <Text style={styles.amountCents}>{netFrac}</Text>
           </View>
-          <Text style={styles.monthComparison}>-- vs last month</Text>
+          {vsLastMonth === null ? (
+            <Text style={styles.monthComparison}>-- vs last month</Text>
+          ) : (
+            <View style={styles.monthComparisonRow}>
+              <Svg fill="none" height={16} viewBox="0 0 16 16" width={16}>
+                <Path
+                  d={vsLastMonth.up
+                    ? "M2 12 L6 7 L9 10 L14 4M14 4H10M14 4V8"
+                    : "M2 4 L6 9 L9 6 L14 12M14 12H10M14 12V8"}
+                  stroke={vsLastMonth.up ? figmaColors.success["600"] : figmaColors.error["600"]}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                />
+              </Svg>
+              <Text style={[styles.monthComparison, { color: vsLastMonth.up ? figmaColors.success["600"] : figmaColors.error["600"] }]}>
+                {Math.abs(vsLastMonth.pct)}%
+              </Text>
+              <Text style={[styles.monthComparison, { color: figmaColors.grayNeutral["900"] }]}>
+                {" vs last month"}
+              </Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.transactionSummaryRow}>
@@ -1473,6 +1524,12 @@ const styles = StyleSheet.create({
     letterSpacing: -0.08,
     lineHeight: 20,
     textAlign: "center",
+  },
+  monthComparisonRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 4,
+    justifyContent: "center",
   },
   transactionSummaryRow: {
     alignItems: "stretch",
