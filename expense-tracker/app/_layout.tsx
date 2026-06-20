@@ -2,7 +2,7 @@ import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useCallback } from "react";
-import { View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { fontFamily } from "@/constants/typography";
 
@@ -29,8 +29,8 @@ export default function RootLayout() {
   }
 
   return (
-    <View onLayout={handleRootLayout} style={{ flex: 1 }}>
+    <GestureHandlerRootView onLayout={handleRootLayout} style={{ flex: 1 }}>
       <Stack screenOptions={{ headerShown: false }} />
-    </View>
+    </GestureHandlerRootView>
   );
 }
