@@ -3503,7 +3503,7 @@ const styles = StyleSheet.create({
   amountSheetHeader: {
     alignItems: "center",
     borderBottomColor: figmaColors.grayNeutral["200"],
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: 1,
     flexDirection: "row",
     justifyContent: "space-between",
     paddingBottom: 16,
