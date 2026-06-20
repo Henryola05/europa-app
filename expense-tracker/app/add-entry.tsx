@@ -3,7 +3,7 @@ import { format } from "date-fns";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -243,6 +243,13 @@ function formatAmountLabel(cents: number, currencySymbol = "$") {
   return `${currencySymbol}${whole}.${decimal}`;
 }
 
+function formatBalanceLabel(cents: number, currencySymbol = "$") {
+  const abs = Math.abs(cents);
+  const whole = formatWholeWithCommas(Math.floor(abs / 100).toString());
+  const decimal = (abs % 100).toString().padStart(2, "0");
+  return `${currencySymbol}${whole}.${decimal}`;
+}
+
 function DownIcon() {
   return (
     <Svg fill="none" height={20} viewBox="0 0 20 20" width={20}>
@@ -406,11 +413,11 @@ const TRANSACTIONS_KEY = "europa:transactions";
 const ACCOUNTS_KEY = "europa:accounts";
 
 const defaultAccounts: Account[] = [
-  { id: "cash-wallet", name: "Cash Wallet", group: "Cash", balanceCents: 325000, openingBalanceCents: 325000 },
-  { id: "chase", name: "Chase", group: "Accounts", balanceCents: 1248000, openingBalanceCents: 1248000 },
-  { id: "wells-fargo", name: "Wells Fargo", group: "Accounts", balanceCents: 792000, openingBalanceCents: 792000 },
-  { id: "venmo", name: "Venmo", group: "Mobile Money", balanceCents: 185000, openingBalanceCents: 185000 },
-  { id: "cash-app", name: "Cash App", group: "Mobile Money", balanceCents: 230000, openingBalanceCents: 230000 },
+  { id: "cash-wallet", name: "Cash Wallet", group: "Cash", balanceCents: 0, openingBalanceCents: 0 },
+  { id: "chase", name: "Chase", group: "Accounts", balanceCents: 0, openingBalanceCents: 0 },
+  { id: "wells-fargo", name: "Wells Fargo", group: "Accounts", balanceCents: 0, openingBalanceCents: 0 },
+  { id: "venmo", name: "Venmo", group: "Mobile Money", balanceCents: 0, openingBalanceCents: 0 },
+  { id: "cash-app", name: "Cash App", group: "Mobile Money", balanceCents: 0, openingBalanceCents: 0 },
 ];
 
 function applyTransactionsToAccounts(accounts: Account[], transactions: StoredTransaction[]): Account[] {
@@ -1307,6 +1314,7 @@ function AccountEditRow({
   onDragEnd,
   onDragMove,
   onDragStart,
+  onEditBalance,
   onPress,
   shift,
 }: {
@@ -1316,6 +1324,7 @@ function AccountEditRow({
   onDragEnd: (dy: number) => void;
   onDragMove: (dy: number) => void;
   onDragStart: () => void;
+  onEditBalance: () => void;
   onPress: () => void;
   shift: number;
 }) {
@@ -1386,7 +1395,18 @@ function AccountEditRow({
       >
         <Text style={styles.accountEditName}>{account.name}</Text>
       </Pressable>
-      <Text style={styles.accountEditBalance}>{formatAmountLabel(account.balanceCents)}</Text>
+      <Pressable hitSlop={8} onPress={onEditBalance}>
+        <Text style={[
+          styles.accountEditBalance,
+          account.balanceCents > 0
+            ? { color: figmaColors.grayNeutral["900"] }
+            : account.balanceCents < 0
+              ? { color: figmaColors.error["600"] }
+              : undefined,
+        ]}>
+          {formatBalanceLabel(account.balanceCents)}
+        </Text>
+      </Pressable>
       <View {...panResponder.panHandlers}>
         <DragHandleIcon />
       </View>
@@ -1397,6 +1417,7 @@ function AccountEditRow({
 function AccountsBottomSheet({
   groups,
   onClose,
+  onEditBalance,
   onNewAccount,
   onRemoveAccount,
   onReorderAccounts,
@@ -1406,6 +1427,7 @@ function AccountsBottomSheet({
 }: {
   groups: AccountGroupData[];
   onClose: () => void;
+  onEditBalance: (accountId: string) => void;
   onNewAccount: () => void;
   onRemoveAccount: (id: string) => void;
   onReorderAccounts: (group: AccountGroup, orderedIds: string[]) => void;
@@ -1543,8 +1565,15 @@ function AccountsBottomSheet({
                 <View key={groupData.group}>
                   <View style={styles.accountGroupHeader}>
                     <Text style={styles.accountGroupName}>{groupData.group}</Text>
-                    <Text style={styles.accountGroupTotal}>
-                      {formatAmountLabel(groupData.totalCents)}
+                    <Text style={[
+                      styles.accountGroupTotal,
+                      groupData.totalCents > 0
+                        ? { color: figmaColors.grayNeutral["900"] }
+                        : groupData.totalCents < 0
+                          ? { color: figmaColors.error["600"] }
+                          : undefined,
+                    ]}>
+                      {formatBalanceLabel(groupData.totalCents)}
                     </Text>
                   </View>
                   {groupData.accounts.map((account, index) => (
@@ -1556,6 +1585,7 @@ function AccountsBottomSheet({
                       onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
                       onDragMove={(dy) => handleDragMove(groupData.group, dy)}
                       onDragStart={() => handleDragStart(groupData.group, index)}
+                      onEditBalance={() => onEditBalance(account.id)}
                       onPress={() => { onSelectAccount(account); closeSheet(); }}
                       shift={getShift(groupData.group, index)}
                     />
@@ -3081,22 +3111,29 @@ export default function AddEntryScreen() {
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
   const [localAccounts, setLocalAccounts] = useState<Account[]>(() => [...defaultAccounts]);
   const [allTransactions, setAllTransactions] = useState<StoredTransaction[]>([]);
+  const [editBalanceAccountId, setEditBalanceAccountId] = useState<string | null>(null);
+  const [editBalanceCents, setEditBalanceCents] = useState(0);
+  const [isEditBalanceOpen, setIsEditBalanceOpen] = useState(false);
+  const accountsReadyRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      Promise.all([
+        AsyncStorage.getItem(ACCOUNTS_KEY),
+        AsyncStorage.getItem(TRANSACTIONS_KEY),
+      ]).then(([accountData, txData]) => {
+        accountsReadyRef.current = true;
+        if (accountData) {
+          const parsed = JSON.parse(accountData) as Account[];
+          setLocalAccounts(parsed.map((a) => ({ ...a, openingBalanceCents: 0, balanceCents: 0 })));
+        }
+        if (txData) setAllTransactions(JSON.parse(txData) as StoredTransaction[]);
+      }).catch(() => {});
+    }, []),
+  );
 
   useEffect(() => {
-    Promise.all([
-      AsyncStorage.getItem(ACCOUNTS_KEY),
-      AsyncStorage.getItem(TRANSACTIONS_KEY),
-    ]).then(([accountData, txData]) => {
-      if (accountData) {
-        const parsed = JSON.parse(accountData) as Account[];
-        // migrate: fill openingBalanceCents for accounts saved before this field existed
-        setLocalAccounts(parsed.map((a) => ({ ...a, openingBalanceCents: a.openingBalanceCents ?? a.balanceCents })));
-      }
-      if (txData) setAllTransactions(JSON.parse(txData) as StoredTransaction[]);
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
+    if (!accountsReadyRef.current) return;
     AsyncStorage.setItem(ACCOUNTS_KEY, JSON.stringify(localAccounts)).catch(() => {});
   }, [localAccounts]);
 
@@ -3104,6 +3141,34 @@ export default function AddEntryScreen() {
     () => applyTransactionsToAccounts(localAccounts, allTransactions),
     [localAccounts, allTransactions],
   );
+
+  function handleOpenEditBalance(accountId: string) {
+    const account = displayAccounts.find((a) => a.id === accountId);
+    if (!account) return;
+    setEditBalanceAccountId(accountId);
+    setEditBalanceCents(account.balanceCents);
+    setIsEditBalanceOpen(true);
+  }
+
+  function handleConfirmEditBalance(newBalanceCents: number) {
+    if (!editBalanceAccountId) return;
+    const net = allTransactions.reduce((sum, tx) => {
+      const account = localAccounts.find((a) => a.id === editBalanceAccountId);
+      if (!account || tx.accountName !== account.name) return sum;
+      if (tx.type === "income") return sum + tx.amountCents;
+      if (tx.type === "expense") return sum - tx.amountCents;
+      return sum;
+    }, 0);
+    setLocalAccounts((prev) =>
+      prev.map((a) =>
+        a.id === editBalanceAccountId
+          ? { ...a, openingBalanceCents: newBalanceCents - net, balanceCents: newBalanceCents - net }
+          : a,
+      ),
+    );
+    setIsEditBalanceOpen(false);
+    setEditBalanceAccountId(null);
+  }
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [isAccountPickerOpen, setIsAccountPickerOpen] = useState(false);
   const [isAccountsEditOpen, setIsAccountsEditOpen] = useState(false);
@@ -3355,12 +3420,22 @@ export default function AddEntryScreen() {
         onReorderAccounts={(group, ids) =>
           setLocalAccounts((prev) => reorderAccountsInGroup(prev, group, ids))
         }
+        onEditBalance={handleOpenEditBalance}
         onSelectAccount={(account) => {
           setSelectedAccount(account);
           setIsAccountsEditOpen(false);
         }}
         selectedAccountId={selectedAccount?.id ?? null}
         visible={isAccountsEditOpen}
+      />
+
+      <AmountInputSheet
+        amountCents={editBalanceCents}
+        onChangeAmount={setEditBalanceCents}
+        onClose={() => handleConfirmEditBalance(editBalanceCents)}
+        onSelectCurrency={setSelectedCurrency}
+        selectedCurrency={selectedCurrency}
+        visible={isEditBalanceOpen}
       />
 
       <CreateAccountBottomSheet

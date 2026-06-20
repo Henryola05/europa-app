@@ -15,6 +15,7 @@ import {
   Modal,
   PanResponder,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -517,15 +518,25 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({});
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const insets = useSafeAreaInsets();
   const currencySymbol = currencySymbols[currency.code] ?? currency.code;
   const selectedMonthLabel = formatMonthYearLabel(selectedMonth);
 
-  useEffect(() => {
-    AsyncStorage.getItem(TRANSACTIONS_KEY)
+  const loadTransactions = useCallback(() => {
+    return AsyncStorage.getItem(TRANSACTIONS_KEY)
       .then((data) => { if (data) setTransactions(JSON.parse(data) as Transaction[]); })
       .catch(() => {});
-  }, [recorded]);
+  }, []);
+
+  useEffect(() => {
+    loadTransactions();
+  }, [loadTransactions, recorded]);
+
+  const handleRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    loadTransactions().finally(() => setIsRefreshing(false));
+  }, [loadTransactions]);
 
   useEffect(() => {
     if (recorded === "1") {
@@ -663,7 +674,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
                 />
               </Svg>
               <Text style={[styles.monthComparison, { color: vsLastMonth.up ? figmaColors.success["600"] : figmaColors.error["600"] }]}>
-                {Math.abs(vsLastMonth.pct)}%
+                {Math.abs(vsLastMonth.pct).toLocaleString()}%
               </Text>
               <Text style={[styles.monthComparison, { color: figmaColors.grayNeutral["900"] }]}>
                 {" vs last month"}
@@ -690,17 +701,30 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
       </View>
 
       {isCalendarView ? (
-        <CalendarMonthGrid
-          currencyCode={currency.code}
-          exchangeRates={exchangeRates}
-          monthTransactions={monthTransactions}
-          selectedMonth={selectedMonth}
-        />
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1 }}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
+          showsVerticalScrollIndicator={false}
+        >
+          <CalendarMonthGrid
+            currencyCode={currency.code}
+            exchangeRates={exchangeRates}
+            monthTransactions={monthTransactions}
+            selectedMonth={selectedMonth}
+          />
+        </ScrollView>
       ) : monthTransactions.length === 0 ? (
-        <EmptyLogState />
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1 }}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
+          showsVerticalScrollIndicator={false}
+        >
+          <EmptyLogState />
+        </ScrollView>
       ) : (
         <ScrollView
           contentContainerStyle={styles.txListContent}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
           showsVerticalScrollIndicator={false}
           style={styles.txList}
         >
