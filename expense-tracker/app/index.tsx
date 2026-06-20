@@ -496,6 +496,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   const [isMonthYearPickerOpen, setIsMonthYearPickerOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => new Date());
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [tabBarHeight, setTabBarHeight] = useState(0);
   const [showToast, setShowToast] = useState(false);
   const insets = useSafeAreaInsets();
   const currencySymbol = currencySymbols[currency.code] ?? currency.code;
@@ -700,7 +701,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
         />
       </Pressable>
 
-      <View style={[styles.tabBar, { paddingBottom: insets.bottom + 4 }]}>
+      <View onLayout={(e) => setTabBarHeight(e.nativeEvent.layout.height)} style={[styles.tabBar, { paddingBottom: insets.bottom + 4 }]}>
         {homeTabs.map((tab, index) => {
           const isActive = index === 0;
           return (
@@ -726,6 +727,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
       />
 
       <ToastNotification
+        bottomOffset={tabBarHeight + 8}
         message={
           transactions[0]?.type === "income"
             ? "Your income has been recorded"
@@ -812,7 +814,7 @@ function TransactionRow({
 
 function ToastCheckIcon() {
   return (
-    <Svg fill="none" height={22} viewBox="0 0 22 22" width={22}>
+    <Svg fill="none" height={16} viewBox="0 0 22 22" width={16}>
       <Circle cx="11" cy="11" fill={figmaColors.base.white} r="11" />
       <Path
         d="M6.5 11.5L9.5 14.5L15.5 8"
@@ -826,13 +828,14 @@ function ToastCheckIcon() {
 }
 
 function ToastNotification({
+  bottomOffset,
   message,
   visible,
 }: {
+  bottomOffset: number;
   message: string;
   visible: boolean;
 }) {
-  const insets = useSafeAreaInsets();
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(20)).current;
 
@@ -855,7 +858,7 @@ function ToastNotification({
       pointerEvents="none"
       style={[
         styles.toast,
-        { bottom: insets.bottom + 80, opacity, transform: [{ translateY }] },
+        { bottom: bottomOffset, opacity, transform: [{ translateY }] },
       ]}
     >
       <ToastCheckIcon />
@@ -2103,17 +2106,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     alignSelf: "center",
     backgroundColor: figmaColors.grayNeutral["900"],
-    borderRadius: 999,
+    borderRadius: 8,
     flexDirection: "row",
     gap: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
     position: "absolute",
   },
   toastText: {
     color: figmaColors.base.white,
     fontFamily: fontFamily.medium,
-    fontSize: 14,
+    fontSize: 12,
     letterSpacing: -0.1,
   },
 });
