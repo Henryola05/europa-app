@@ -1323,7 +1323,7 @@ function AccountEditRow({
   onDelete: () => void;
   onDragEnd: (dy: number) => void;
   onDragMove: (dy: number) => void;
-  onDragStart: () => void;
+  onDragStart: (y0: number) => void;
   onEditBalance: () => void;
   onPress: () => void;
   shift: number;
@@ -1352,12 +1352,11 @@ function AccountEditRow({
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
+      onPanResponderGrant: (_, gs) => {
         dragTranslate.setValue(0);
-        onDragStartRef.current();
+        onDragStartRef.current(gs.y0);
       },
       onPanResponderMove: (_, gs) => {
-        dragTranslate.setValue(gs.dy);
         onDragMoveRef.current(gs.dy);
       },
       onPanResponderRelease: (_, gs) => {
@@ -1376,7 +1375,7 @@ function AccountEditRow({
       style={[
         styles.accountEditRow,
         isDragging && styles.accountEditRowDragging,
-        { transform: [{ translateY }], zIndex: isDragging ? 10 : 0 },
+        { transform: [{ translateY }], zIndex: isDragging ? 10 : 0, opacity: isDragging ? 0 : 1 },
       ]}
     >
       <Pressable
@@ -1418,6 +1417,7 @@ function AccountsBottomSheet({
   groups,
   onClose,
   onEditBalance,
+  onMoveAccountToGroup,
   onNewAccount,
   onRemoveAccount,
   onReorderAccounts,
@@ -1428,6 +1428,7 @@ function AccountsBottomSheet({
   groups: AccountGroupData[];
   onClose: () => void;
   onEditBalance: (accountId: string) => void;
+  onMoveAccountToGroup: (accountId: string, toGroup: AccountGroup, atIndex: number) => void;
   onNewAccount: () => void;
   onRemoveAccount: (id: string) => void;
   onReorderAccounts: (group: AccountGroup, orderedIds: string[]) => void;
@@ -1441,11 +1442,22 @@ function AccountsBottomSheet({
 
   const [dragGroup, setDragGroup] = useState<AccountGroup | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [snapTarget, setSnapTarget] = useState<number | null>(null);
+  const [snapGroup, setSnapGroup] = useState<AccountGroup | null>(null);
+  const [snapGroupIndex, setSnapGroupIndex] = useState<number | null>(null);
   const dragGroupRef = useRef<AccountGroup | null>(null);
   const dragIndexRef = useRef<number | null>(null);
-  const snapTargetRef = useRef<number | null>(null);
+  const snapGroupRef = useRef<AccountGroup | null>(null);
+  const snapGroupIndexRef = useRef<number | null>(null);
   const groupLengthRef = useRef<Record<string, number>>({});
+  const groupYRef = useRef<Partial<Record<AccountGroup, number>>>({});
+  const groupHeaderHeightRef = useRef<Partial<Record<AccountGroup, number>>>({});
+  const dragItemStartYRef = useRef(0);
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+
+  const floatTopAnim = useRef(new Animated.Value(0)).current;
+  const floatDyAnim = useRef(new Animated.Value(0)).current;
+  const floatTranslateY = useRef(Animated.add(floatTopAnim, floatDyAnim)).current;
 
   groups.forEach((g) => { groupLengthRef.current[g.group] = g.accounts.length; });
 
@@ -1471,51 +1483,98 @@ function AccountsBottomSheet({
     }
   }, [backdropOpacity, translateY, visible]);
 
-  const handleDragStart = useCallback((group: AccountGroup, index: number) => {
+  const handleDragStart = useCallback((group: AccountGroup, index: number, y0: number) => {
+    floatTopAnim.setValue(y0 - ACCOUNT_ITEM_HEIGHT / 2);
+    floatDyAnim.setValue(0);
     dragGroupRef.current = group;
     dragIndexRef.current = index;
-    snapTargetRef.current = index;
+    snapGroupRef.current = group;
+    snapGroupIndexRef.current = index;
     setDragGroup(group);
     setDragIndex(index);
-    setSnapTarget(index);
-  }, []);
+    setSnapGroup(group);
+    setSnapGroupIndex(index);
+    const groupY = groupYRef.current[group] ?? 0;
+    const headerH = groupHeaderHeightRef.current[group] ?? 0;
+    dragItemStartYRef.current = groupY + headerH + index * ACCOUNT_ITEM_HEIGHT;
+  }, [floatDyAnim, floatTopAnim]);
 
-  const handleDragMove = useCallback((group: AccountGroup, dy: number) => {
-    if (dragIndexRef.current === null) return;
-    const len = groupLengthRef.current[group] ?? 1;
-    const to = Math.max(0, Math.min(len - 1, dragIndexRef.current + Math.round(dy / ACCOUNT_ITEM_HEIGHT)));
-    if (to !== snapTargetRef.current) {
-      snapTargetRef.current = to;
-      setSnapTarget(to);
-    }
-  }, []);
+  const handleDragMove = useCallback((_group: AccountGroup, dy: number) => {
+    if (dragIndexRef.current === null || dragGroupRef.current === null) return;
+    floatDyAnim.setValue(dy);
+    const currentCenterY = dragItemStartYRef.current + dy + ACCOUNT_ITEM_HEIGHT / 2;
+    const gs = groupsRef.current;
+    let newSnapGroup: AccountGroup = dragGroupRef.current;
+    let newSnapIndex = dragIndexRef.current;
 
-  const handleDragEnd = useCallback((group: AccountGroup, dy: number) => {
-    const from = dragIndexRef.current;
-    const to = snapTargetRef.current;
-    if (from !== null && to !== null && from !== to) {
-      const groupData = groups.find((g) => g.group === group);
-      if (groupData) {
-        const newOrder = [...groupData.accounts];
-        const [removed] = newOrder.splice(from, 1);
-        newOrder.splice(to, 0, removed);
-        onReorderAccounts(group, newOrder.map((a) => a.id));
+    for (let i = 0; i < gs.length; i++) {
+      const g = gs[i];
+      const groupY = groupYRef.current[g.group] ?? 0;
+      const headerH = groupHeaderHeightRef.current[g.group] ?? 0;
+      const itemCount = g.accounts.length;
+      const groupBottom = groupY + headerH + itemCount * ACCOUNT_ITEM_HEIGHT;
+      const nextGroupY = i + 1 < gs.length ? (groupYRef.current[gs[i + 1].group] ?? groupBottom) : Infinity;
+      if (currentCenterY >= groupY && currentCenterY < nextGroupY) {
+        newSnapGroup = g.group;
+        const relY = currentCenterY - groupY - headerH;
+        const maxIndex = g.group === dragGroupRef.current ? itemCount - 1 : itemCount;
+        newSnapIndex = Math.max(0, Math.min(maxIndex, Math.floor(relY / ACCOUNT_ITEM_HEIGHT)));
+        break;
       }
     }
+
+    if (newSnapGroup !== snapGroupRef.current || newSnapIndex !== snapGroupIndexRef.current) {
+      snapGroupRef.current = newSnapGroup;
+      snapGroupIndexRef.current = newSnapIndex;
+      setSnapGroup(newSnapGroup);
+      setSnapGroupIndex(newSnapIndex);
+    }
+  }, [floatDyAnim]);
+
+  const handleDragEnd = useCallback((group: AccountGroup, _dy: number) => {
+    const from = dragIndexRef.current;
+    const toGroup = snapGroupRef.current;
+    const toIndex = snapGroupIndexRef.current;
+
+    if (from !== null && toGroup !== null && toIndex !== null) {
+      if (toGroup !== group) {
+        const sourceData = groupsRef.current.find((g) => g.group === group);
+        const account = sourceData?.accounts[from];
+        if (account) onMoveAccountToGroup(account.id, toGroup, toIndex);
+      } else if (from !== toIndex) {
+        const groupData = groupsRef.current.find((g) => g.group === group);
+        if (groupData) {
+          const newOrder = [...groupData.accounts];
+          const [removed] = newOrder.splice(from, 1);
+          newOrder.splice(toIndex, 0, removed);
+          onReorderAccounts(group, newOrder.map((a) => a.id));
+        }
+      }
+    }
+
+    floatDyAnim.setValue(0);
     dragGroupRef.current = null;
     dragIndexRef.current = null;
-    snapTargetRef.current = null;
+    snapGroupRef.current = null;
+    snapGroupIndexRef.current = null;
     setDragGroup(null);
     setDragIndex(null);
-    setSnapTarget(null);
-  }, [groups, onReorderAccounts]);
+    setSnapGroup(null);
+    setSnapGroupIndex(null);
+  }, [floatDyAnim, onMoveAccountToGroup, onReorderAccounts]);
 
   const getShift = useCallback((group: AccountGroup, index: number): number => {
-    if (dragGroup !== group || dragIndex === null || snapTarget === null) return 0;
-    if (dragIndex < snapTarget && index > dragIndex && index <= snapTarget) return -ACCOUNT_ITEM_HEIGHT;
-    if (dragIndex > snapTarget && index < dragIndex && index >= snapTarget) return ACCOUNT_ITEM_HEIGHT;
+    if (dragGroup === null || dragIndex === null || snapGroup === null || snapGroupIndex === null) return 0;
+    if (snapGroup === dragGroup) {
+      if (group !== dragGroup) return 0;
+      if (dragIndex < snapGroupIndex && index > dragIndex && index <= snapGroupIndex) return -ACCOUNT_ITEM_HEIGHT;
+      if (dragIndex > snapGroupIndex && index < dragIndex && index >= snapGroupIndex) return ACCOUNT_ITEM_HEIGHT;
+      return 0;
+    }
+    if (group === dragGroup && index > dragIndex) return -ACCOUNT_ITEM_HEIGHT;
+    if (group === snapGroup && index >= snapGroupIndex) return ACCOUNT_ITEM_HEIGHT;
     return 0;
-  }, [dragGroup, dragIndex, snapTarget]);
+  }, [dragGroup, dragIndex, snapGroup, snapGroupIndex]);
 
   return (
     <Modal animationType="none" onRequestClose={closeSheet} transparent visible={visible}>
@@ -1562,8 +1621,14 @@ function AccountsBottomSheet({
               showsVerticalScrollIndicator={false}
             >
               {groups.map((groupData) => (
-                <View key={groupData.group}>
-                  <View style={styles.accountGroupHeader}>
+                <View
+                  key={groupData.group}
+                  onLayout={(e) => { groupYRef.current[groupData.group] = e.nativeEvent.layout.y; }}
+                >
+                  <View
+                    onLayout={(e) => { groupHeaderHeightRef.current[groupData.group] = e.nativeEvent.layout.height; }}
+                    style={styles.accountGroupHeader}
+                  >
                     <Text style={styles.accountGroupName}>{groupData.group}</Text>
                     <Text style={[
                       styles.accountGroupTotal,
@@ -1584,7 +1649,7 @@ function AccountsBottomSheet({
                       onDelete={() => onRemoveAccount(account.id)}
                       onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
                       onDragMove={(dy) => handleDragMove(groupData.group, dy)}
-                      onDragStart={() => handleDragStart(groupData.group, index)}
+                      onDragStart={(y0) => handleDragStart(groupData.group, index, y0)}
                       onEditBalance={() => onEditBalance(account.id)}
                       onPress={() => { onSelectAccount(account); closeSheet(); }}
                       shift={getShift(groupData.group, index)}
@@ -1595,6 +1660,44 @@ function AccountsBottomSheet({
             </ScrollView>
           </Animated.View>
         </View>
+
+        {dragGroup !== null && dragIndex !== null && (() => {
+          const account = groupsRef.current.find((g) => g.group === dragGroup)?.accounts[dragIndex];
+          if (!account) return null;
+          return (
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.accountEditRow,
+                styles.accountEditRowDragging,
+                {
+                  left: 20,
+                  position: "absolute",
+                  right: 20,
+                  top: 0,
+                  transform: [{ translateY: floatTranslateY }],
+                  zIndex: 1000,
+                },
+              ]}
+            >
+              <MinusCircleIcon />
+              <View style={styles.accountEditNameArea}>
+                <Text style={styles.accountEditName}>{account.name}</Text>
+              </View>
+              <Text style={[
+                styles.accountEditBalance,
+                account.balanceCents > 0
+                  ? { color: figmaColors.grayNeutral["900"] }
+                  : account.balanceCents < 0
+                    ? { color: figmaColors.error["600"] }
+                    : undefined,
+              ]}>
+                {formatBalanceLabel(account.balanceCents)}
+              </Text>
+              <DragHandleIcon />
+            </Animated.View>
+          );
+        })()}
       </View>
 
     </Modal>
@@ -3412,6 +3515,27 @@ export default function AddEntryScreen() {
       <AccountsBottomSheet
         groups={groupAccounts(displayAccounts)}
         onClose={() => setIsAccountsEditOpen(false)}
+        onEditBalance={handleOpenEditBalance}
+        onMoveAccountToGroup={(accountId, toGroup, atIndex) => {
+          setLocalAccounts((prev) => {
+            const account = prev.find((a) => a.id === accountId);
+            if (!account) return prev;
+            const updated = { ...account, group: toGroup };
+            const withoutAccount = prev.filter((a) => a.id !== accountId);
+            const targetGroupItems = withoutAccount.filter((a) => a.group === toGroup);
+            if (atIndex >= targetGroupItems.length) {
+              const lastIdx = withoutAccount.reduce((li, a, i) => (a.group === toGroup ? i : li), -1);
+              const result = [...withoutAccount];
+              result.splice(lastIdx + 1, 0, updated);
+              return result;
+            }
+            const insertBeforeId = targetGroupItems[atIndex].id;
+            const insertIdx = withoutAccount.findIndex((a) => a.id === insertBeforeId);
+            const result = [...withoutAccount];
+            result.splice(insertIdx, 0, updated);
+            return result;
+          });
+        }}
         onNewAccount={() => {
           setIsAccountsEditOpen(false);
           setIsCreateAccountOpen(true);
@@ -3420,7 +3544,6 @@ export default function AddEntryScreen() {
         onReorderAccounts={(group, ids) =>
           setLocalAccounts((prev) => reorderAccountsInGroup(prev, group, ids))
         }
-        onEditBalance={handleOpenEditBalance}
         onSelectAccount={(account) => {
           setSelectedAccount(account);
           setIsAccountsEditOpen(false);
@@ -3545,7 +3668,7 @@ const styles = StyleSheet.create({
   },
   tabLabel: {
     color: figmaColors.grayNeutral["400"],
-    fontFamily: fontFamily.medium,
+    fontFamily: fontFamily.semiBold,
     fontSize: 14,
     letterSpacing: -0.084,
     lineHeight: 20,
