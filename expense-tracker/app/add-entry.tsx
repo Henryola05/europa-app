@@ -443,6 +443,7 @@ const accountGroupOrder: AccountGroup[] = [
 ];
 
 const ACCOUNT_ITEM_HEIGHT = 52;
+const HOME_CURRENCY_KEY = "europa:home-currency";
 const TRANSACTIONS_KEY = "europa:transactions";
 const ACCOUNTS_KEY = "europa:accounts";
 
@@ -3284,7 +3285,8 @@ export default function AddEntryScreen() {
       Promise.all([
         AsyncStorage.getItem(ACCOUNTS_KEY),
         AsyncStorage.getItem(TRANSACTIONS_KEY),
-      ]).then(([accountData, txData]) => {
+        AsyncStorage.getItem(HOME_CURRENCY_KEY),
+      ]).then(([accountData, txData, homeCurrencyCode]) => {
         accountsReadyRef.current = true;
         const storedAccounts = accountData
           ? (JSON.parse(accountData) as Account[]).map((account) => ({
@@ -3299,6 +3301,11 @@ export default function AddEntryScreen() {
 
         setLocalAccounts(storedAccounts);
         setAllTransactions(storedTransactions);
+
+        if (homeCurrencyCode && !transactionId) {
+          const homeCurrency = currencies.find((c) => c.code === homeCurrencyCode);
+          if (homeCurrency) setSelectedCurrency(homeCurrency);
+        }
 
         if (!transactionId || editInitializedRef.current) return;
 
