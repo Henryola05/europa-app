@@ -3,7 +3,7 @@ import { format } from "date-fns";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -398,6 +398,17 @@ type StoredTransaction = {
   amountCents: number;
   accountName: string;
   destinationAccountName?: string;
+};
+
+type RecordedTransaction = StoredTransaction & {
+  categoryColor?: string;
+  categoryEmoji: string;
+  categoryName: string;
+  currencyCode: string;
+  date: string;
+  description: string;
+  imageUris: string[];
+  recurringOption: string;
 };
 
 type AccountGroupData = {
@@ -3231,7 +3242,14 @@ function ImageUploadBottomSheet({
 
 export default function AddEntryScreen() {
   const router = useRouter();
+  const { transactionId: routeTransactionId } = useLocalSearchParams<{
+    transactionId?: string;
+  }>();
   const insets = useSafeAreaInsets();
+  const transactionId =
+    typeof routeTransactionId === "string" ? routeTransactionId : undefined;
+  const isEditing = transactionId !== undefined;
+  const editInitializedRef = useRef(false);
   const [transactionType, setTransactionType] =
     useState<TransactionType>("income");
   const [amountCents, setAmountCents] = useState(0);
@@ -3257,6 +3275,10 @@ export default function AddEntryScreen() {
   const [isEditBalanceOpen, setIsEditBalanceOpen] = useState(false);
   const accountsReadyRef = useRef(false);
 
+  useEffect(() => {
+    editInitializedRef.current = false;
+  }, [transactionId]);
+
   useFocusEffect(
     useCallback(() => {
       Promise.all([
@@ -3264,13 +3286,67 @@ export default function AddEntryScreen() {
         AsyncStorage.getItem(TRANSACTIONS_KEY),
       ]).then(([accountData, txData]) => {
         accountsReadyRef.current = true;
-        if (accountData) {
-          const parsed = JSON.parse(accountData) as Account[];
-          setLocalAccounts(parsed.map((a) => ({ ...a, openingBalanceCents: 0, balanceCents: 0 })));
-        }
-        if (txData) setAllTransactions(JSON.parse(txData) as StoredTransaction[]);
+        const storedAccounts = accountData
+          ? (JSON.parse(accountData) as Account[]).map((account) => ({
+              ...account,
+              balanceCents: 0,
+              openingBalanceCents: 0,
+            }))
+          : defaultAccounts;
+        const storedTransactions = txData
+          ? (JSON.parse(txData) as RecordedTransaction[])
+          : [];
+
+        setLocalAccounts(storedAccounts);
+        setAllTransactions(storedTransactions);
+
+        if (!transactionId || editInitializedRef.current) return;
+
+        const transaction = storedTransactions.find(
+          (stored) => stored.id === transactionId,
+        );
+        if (!transaction) return;
+
+        editInitializedRef.current = true;
+        setTransactionType(transaction.type);
+        setAmountCents(transaction.amountCents);
+        setDescription(transaction.description ?? "");
+        setSelectedCurrency(
+          currencies.find((currency) => currency.code === transaction.currencyCode) ??
+            currencies[0],
+        );
+        setSelectedDate(new Date(transaction.date));
+        setRecurringOption(transaction.recurringOption ?? "Never");
+        setSelectedCategory(
+          transaction.type === "transfer" ||
+            !transaction.categoryName ||
+            transaction.categoryName === "Uncategorized"
+            ? null
+            : {
+                emoji: transaction.categoryEmoji,
+                name: transaction.categoryName,
+              },
+        );
+        setSelectedAccount(
+          storedAccounts.find((account) => account.name === transaction.accountName) ??
+            null,
+        );
+        setTransferDestinationAccount(
+          storedAccounts.find(
+            (account) => account.name === transaction.destinationAccountName,
+          ) ?? null,
+        );
+        setTransactionImages(
+          (transaction.imageUris ?? []).map((uri, index) => ({
+            height: 0,
+            id: `${transaction.id}-image-${index}`,
+            source: "gallery" as const,
+            uri,
+            width: 0,
+          })),
+        );
       }).catch(() => {});
-    }, []),
+    }, [transactionId]),
   );
 
   useEffect(() => {
@@ -3348,15 +3424,19 @@ export default function AddEntryScreen() {
         : "spent";
 
   const recordLabel =
-    transactionType === "income"
-      ? "Record income"
-      : transactionType === "transfer"
-        ? "Record transfer"
-        : "Record expense";
+    isEditing
+      ? "Save"
+      : transactionType === "income"
+        ? "Record income"
+        : transactionType === "transfer"
+          ? "Record transfer"
+          : "Record expense";
 
   async function handleRecord() {
-    const transaction = {
-      id: Math.random().toString(36).slice(2),
+    if (!canRecord) return;
+
+    const transaction: RecordedTransaction = {
+      id: transactionId ?? Math.random().toString(36).slice(2),
       type: transactionType,
       amountCents,
       description,
@@ -3376,13 +3456,39 @@ export default function AddEntryScreen() {
     };
     try {
       const existing = await AsyncStorage.getItem(TRANSACTIONS_KEY);
-      const list = existing ? (JSON.parse(existing) as typeof transaction[]) : [];
-      await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify([transaction, ...list]));
-
+      const list = existing ? (JSON.parse(existing) as RecordedTransaction[]) : [];
+      const nextTransactions = isEditing
+        ? list.map((stored) =>
+            stored.id === transaction.id ? transaction : stored,
+          )
+        : [transaction, ...list];
+      await AsyncStorage.setItem(
+        TRANSACTIONS_KEY,
+        JSON.stringify(nextTransactions),
+      );
     } catch {
       // silently continue — don't block navigation on storage failure
     }
-    router.replace("/?recorded=1");
+    router.replace(isEditing ? "/" : "/?recorded=1");
+  }
+
+  async function handleDelete() {
+    if (!transactionId) return;
+
+    try {
+      const existing = await AsyncStorage.getItem(TRANSACTIONS_KEY);
+      const list = existing ? (JSON.parse(existing) as RecordedTransaction[]) : [];
+      await AsyncStorage.setItem(
+        TRANSACTIONS_KEY,
+        JSON.stringify(list.filter((stored) => stored.id !== transactionId)),
+      );
+    } catch {
+      // Keep navigation reliable even if local persistence fails.
+    }
+    router.replace({
+      pathname: "/",
+      params: { deletedType: transactionType, recorded: "deleted" },
+    });
   }
 
   return (
@@ -3390,15 +3496,29 @@ export default function AddEntryScreen() {
       <StatusBar style="dark" />
 
       <View style={styles.header}>
-        <Pressable
-          accessibilityLabel="Close add entry"
-          accessibilityRole="button"
-          hitSlop={10}
-          onPress={() => router.back()}
-          style={styles.closeButton}
-        >
-          <CloseIcon />
-        </Pressable>
+        <View style={styles.headerTopRow}>
+          <Pressable
+            accessibilityLabel="Close add entry"
+            accessibilityRole="button"
+            hitSlop={10}
+            onPress={() => router.back()}
+            style={styles.closeButton}
+          >
+            <CloseIcon />
+          </Pressable>
+
+          {isEditing ? (
+            <Pressable
+              accessibilityLabel="Delete transaction"
+              accessibilityRole="button"
+              hitSlop={10}
+              onPress={handleDelete}
+              style={styles.deleteButton}
+            >
+              <TrashIcon />
+            </Pressable>
+          ) : null}
+        </View>
 
         <View style={styles.tabSwitcher}>
           {transactionTabs.map((tab) => {
@@ -3764,9 +3884,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
   },
+  headerTopRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
   closeButton: {
     alignItems: "center",
     backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 999,
+    height: 32,
+    justifyContent: "center",
+    width: 32,
+  },
+  deleteButton: {
+    alignItems: "center",
+    backgroundColor: figmaColors.error["100"],
     borderRadius: 999,
     height: 32,
     justifyContent: "center",

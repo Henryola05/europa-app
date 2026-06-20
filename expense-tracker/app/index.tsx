@@ -518,7 +518,10 @@ function CurrencySetupContent({
 
 function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   const router = useRouter();
-  const { recorded } = useLocalSearchParams<{ recorded?: string }>();
+  const { deletedType, recorded } = useLocalSearchParams<{
+    deletedType?: Transaction["type"];
+    recorded?: string;
+  }>();
   const [isCalendarView, setIsCalendarView] = useState(false);
   const [isMonthYearPickerOpen, setIsMonthYearPickerOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => new Date());
@@ -549,12 +552,12 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   }, [loadTransactions]);
 
   useEffect(() => {
-    if (recorded === "1") {
+    if (recorded === "1" || recorded === "deleted") {
       setShowToast(true);
       const t = setTimeout(() => setShowToast(false), 3000);
       return () => clearTimeout(t);
     }
-  }, [recorded]);
+  }, [deletedType, recorded]);
 
   useEffect(() => {
     const hasForeign = transactions.some((tx) => tx.currencyCode !== currency.code);
@@ -751,6 +754,12 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
                   currencySymbol={currencySymbol}
                   exchangeRates={exchangeRates}
                   key={tx.id}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/add-entry",
+                      params: { transactionId: tx.id },
+                    })
+                  }
                   transaction={tx}
                 />
               ))}
@@ -800,12 +809,15 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
       <ToastNotification
         bottomOffset={tabBarHeight + 8}
         message={
-          transactions[0]?.type === "income"
-            ? "Your income has been recorded"
-            : transactions[0]?.type === "transfer"
-              ? "Your transfer has been recorded"
-              : "Your expense has been recorded"
+          recorded === "deleted"
+            ? `Your ${deletedType ?? "transaction"} has been deleted`
+            : transactions[0]?.type === "income"
+              ? "Your income has been recorded"
+              : transactions[0]?.type === "transfer"
+                ? "Your transfer has been recorded"
+                : "Your expense has been recorded"
         }
+        variant={recorded === "deleted" ? "destructive" : "default"}
         visible={showToast}
       />
 
@@ -843,6 +855,7 @@ function SearchOverlay({
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -947,6 +960,12 @@ function SearchOverlay({
                   currencySymbol={currencySymbol}
                   exchangeRates={exchangeRates}
                   key={tx.id}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/add-entry",
+                      params: { transactionId: tx.id },
+                    })
+                  }
                   transaction={tx}
                 />
               ))}
@@ -995,11 +1014,13 @@ function TransactionRow({
   currencyCode,
   currencySymbol,
   exchangeRates,
+  onPress,
   transaction,
 }: {
   currencyCode: string;
   currencySymbol: string;
   exchangeRates: Record<string, number>;
+  onPress: () => void;
   transaction: Transaction;
 }) {
   const isIncome = transaction.type === "income";
@@ -1015,7 +1036,12 @@ function TransactionRow({
   const displayCents = convertCents(transaction.amountCents, transaction.currencyCode, currencyCode, exchangeRates);
 
   return (
-    <View style={styles.txRow}>
+    <Pressable
+      accessibilityLabel={`Edit ${title}`}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={styles.txRow}
+    >
       <View style={[styles.txIconCircle, { backgroundColor: bgColor }]}>
         <Text style={styles.txEmoji}>
           {transaction.categoryEmoji || "💰"}
@@ -1032,7 +1058,7 @@ function TransactionRow({
       <Text style={[styles.txAmount, { color: amountColor }]}>
         {prefix}{formatCents(displayCents, currencySymbol)}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -1051,13 +1077,26 @@ function ToastCheckIcon() {
   );
 }
 
+function ToastTrashIcon() {
+  return (
+    <Svg fill="none" height={16} viewBox="0 0 24 24" width={16}>
+      <Path
+        d="M14.28 2a2 2 0 0 1 1.897 1.368L16.72 5H20a1 1 0 1 1 0 2l-.003.071-.867 12.143A3 3 0 0 1 16.138 22H7.862a3 3 0 0 1-2.992-2.786L4.003 7.07A1.01 1.01 0 0 1 4 7a1 1 0 0 1 0-2h3.28l.543-1.632A2 2 0 0 1 9.721 2zM9 10a1 1 0 0 0-.993.883L8 11v6a1 1 0 0 0 1.993.117L10 17v-6a1 1 0 0 0-1-1m6 0a1 1 0 0 0-1 1v6a1 1 0 1 0 2 0v-6a1 1 0 0 0-1-1m-.72-6H9.72l-.333 1h5.226z"
+        fill={figmaColors.base.white}
+      />
+    </Svg>
+  );
+}
+
 function ToastNotification({
   bottomOffset,
   message,
+  variant = "default",
   visible,
 }: {
   bottomOffset: number;
   message: string;
+  variant?: "default" | "destructive";
   visible: boolean;
 }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -1082,10 +1121,11 @@ function ToastNotification({
       pointerEvents="none"
       style={[
         styles.toast,
+        variant === "destructive" ? styles.toastDestructive : null,
         { bottom: bottomOffset, opacity, transform: [{ translateY }] },
       ]}
     >
-      <ToastCheckIcon />
+      {variant === "destructive" ? <ToastTrashIcon /> : <ToastCheckIcon />}
       <Text style={styles.toastText}>{message}</Text>
     </Animated.View>
   );
@@ -2394,6 +2434,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 8,
     position: "absolute",
+  },
+  toastDestructive: {
+    backgroundColor: figmaColors.error["700"],
   },
   toastText: {
     color: figmaColors.base.white,
