@@ -3,6 +3,7 @@ import type { TextStyle } from "react-native";
 export const fontFamily = {
   regular: "OpenRunde-Regular",
   medium: "OpenRunde-Medium",
+  semiBold: "OpenRunde-Semibold",
   bold: "OpenRunde-Bold",
 } as const;
 

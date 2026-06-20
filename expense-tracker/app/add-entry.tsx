@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { format } from "date-fns";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
@@ -393,6 +394,7 @@ const accountGroupOrder: AccountGroup[] = [
 ];
 
 const ACCOUNT_ITEM_HEIGHT = 52;
+const TRANSACTIONS_KEY = "europa:transactions";
 
 const defaultAccounts: Account[] = [
   { id: "cash-wallet", name: "Cash Wallet", group: "Cash", balanceCents: 325000 },
@@ -3084,6 +3086,31 @@ export default function AddEntryScreen() {
         ? "Record transfer"
         : "Record expense";
 
+  async function handleRecord() {
+    const transaction = {
+      id: Math.random().toString(36).slice(2),
+      type: transactionType,
+      amountCents,
+      description,
+      categoryEmoji: selectedCategory?.emoji ?? "",
+      categoryName: selectedCategory?.name ?? "Uncategorized",
+      categoryColor: categoryColors[selectedCategory?.name ?? ""] ?? figmaColors.grayNeutral["300"],
+      accountName: selectedAccount?.name ?? "",
+      date: selectedDate.toISOString(),
+      currencyCode: selectedCurrency.code,
+      recurringOption,
+      imageUris: transactionImages.map((i) => i.uri),
+    };
+    try {
+      const existing = await AsyncStorage.getItem(TRANSACTIONS_KEY);
+      const list = existing ? (JSON.parse(existing) as typeof transaction[]) : [];
+      await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify([transaction, ...list]));
+    } catch {
+      // silently continue — don't block navigation on storage failure
+    }
+    router.replace("/?recorded=1");
+  }
+
   return (
     <SafeAreaView edges={["top"]} style={styles.screen}>
       <StatusBar style="dark" />
@@ -3222,6 +3249,7 @@ export default function AddEntryScreen() {
           accessibilityRole="button"
           accessibilityState={{ disabled: !hasAmount }}
           disabled={!hasAmount}
+          onPress={handleRecord}
           style={[
             styles.recordButton,
             hasAmount && styles.recordButtonEnabled,

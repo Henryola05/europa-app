@@ -9,6 +9,7 @@ import { fontFamily } from "@/constants/typography";
 const openRundeFonts = {
   [fontFamily.regular]: require("../assets/fonts/OpenRunde-Regular.otf"),
   [fontFamily.medium]: require("../assets/fonts/OpenRunde-Medium.otf"),
+  [fontFamily.semiBold]: require("../assets/fonts/OpenRunde-Semibold.otf"),
   [fontFamily.bold]: require("../assets/fonts/OpenRunde-Bold.otf"),
 } as const;
 

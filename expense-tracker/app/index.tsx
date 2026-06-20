@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { format, getDay, getDaysInMonth, startOfMonth } from "date-fns";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import {
   useCallback,
@@ -25,14 +25,66 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import Svg, { ClipPath, Defs, G, Path, Rect } from "react-native-svg";
+import Svg, { Circle, ClipPath, Defs, G, Path, Rect } from "react-native-svg";
 
 import { figmaColors } from "@/constants/colors";
 import { fontFamily } from "@/constants/typography";
 
 const HOME_CURRENCY_KEY = "europa:home-currency";
+const TRANSACTIONS_KEY = "europa:transactions";
 const SPLASH_DURATION_MS = 2500;
 const SHEET_CLOSE_DISTANCE = 120;
+
+type Transaction = {
+  id: string;
+  type: "income" | "expense" | "transfer";
+  amountCents: number;
+  description: string;
+  categoryEmoji: string;
+  categoryName: string;
+  categoryColor?: string;
+  accountName: string;
+  date: string;
+  currencyCode: string;
+  recurringOption: string;
+  imageUris: string[];
+};
+
+type DayGroup = {
+  dateKey: string;
+  date: Date;
+  transactions: Transaction[];
+  netCents: number;
+};
+
+const DEFAULT_CATEGORY_COLORS: Record<string, string> = {
+  Food: "#ef4444",
+  "Social Life": "#3b82f6",
+  Pets: "#f97316",
+  Transport: "#22c55e",
+  Culture: "#f59e0b",
+  Rent: "#a855f7",
+  Apparel: "#06b6d4",
+  Beauty: "#ec4899",
+  Health: "#14b8a6",
+  Education: "#8b5cf6",
+  Gift: "#f43f5e",
+  Fuel: "#78716c",
+  Loan: "#64748b",
+  Airtime: "#0ea5e9",
+  Subscription: "#10b981",
+  Other: "#6b7280",
+};
+
+function categoryColor(name: string): string {
+  return DEFAULT_CATEGORY_COLORS[name] ?? "#6b7280";
+}
+
+function formatCents(cents: number, symbol: string): string {
+  const whole = Math.floor(cents / 100).toLocaleString();
+  const frac = String(cents % 100).padStart(2, "0");
+  return `${symbol}${whole}.${frac}`;
+}
 
 export type Currency = {
   code: string;
@@ -431,12 +483,70 @@ function CurrencySetupContent({
 
 function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   const router = useRouter();
+  const { recorded } = useLocalSearchParams<{ recorded?: string }>();
   const [isCalendarView, setIsCalendarView] = useState(false);
   const [isMonthYearPickerOpen, setIsMonthYearPickerOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => new Date());
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [showToast, setShowToast] = useState(false);
   const insets = useSafeAreaInsets();
   const currencySymbol = currencySymbols[currency.code] ?? currency.code;
   const selectedMonthLabel = formatMonthYearLabel(selectedMonth);
+
+  useEffect(() => {
+    AsyncStorage.getItem(TRANSACTIONS_KEY)
+      .then((data) => { if (data) setTransactions(JSON.parse(data) as Transaction[]); })
+      .catch(() => {});
+  }, [recorded]);
+
+  useEffect(() => {
+    if (recorded === "1") {
+      setShowToast(true);
+      const t = setTimeout(() => setShowToast(false), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [recorded]);
+
+  const monthTransactions = useMemo(() =>
+    transactions.filter((tx) => {
+      const d = new Date(tx.date);
+      return d.getFullYear() === selectedMonth.getFullYear() &&
+        d.getMonth() === selectedMonth.getMonth();
+    }),
+    [transactions, selectedMonth],
+  );
+
+  const { incomeCents, expenseCents, netCents } = useMemo(() => {
+    let inc = 0, exp = 0;
+    for (const tx of monthTransactions) {
+      if (tx.type === "income") inc += tx.amountCents;
+      else if (tx.type === "expense") exp += tx.amountCents;
+    }
+    return { incomeCents: inc, expenseCents: exp, netCents: inc - exp };
+  }, [monthTransactions]);
+
+  const dayGroups = useMemo<DayGroup[]>(() => {
+    const map = new Map<string, Transaction[]>();
+    for (const tx of monthTransactions) {
+      const key = tx.date.slice(0, 10);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(tx);
+    }
+    return Array.from(map.entries())
+      .map(([dateKey, txs]) => ({
+        dateKey,
+        date: new Date(dateKey),
+        transactions: txs,
+        netCents: txs.reduce((s, tx) =>
+          tx.type === "income" ? s + tx.amountCents :
+          tx.type === "expense" ? s - tx.amountCents : s, 0),
+      }))
+      .sort((a, b) => b.date.getTime() - a.date.getTime());
+  }, [monthTransactions]);
+
+  const netAbsCents = Math.abs(netCents);
+  const netWhole = `${netCents < 0 ? "−" : ""}${currencySymbol}${Math.floor(netAbsCents / 100).toLocaleString()}.`;
+  const netFrac = String(netAbsCents % 100).padStart(2, "0");
 
   return (
     <SafeAreaView edges={["top"]} style={styles.homeScreen}>
@@ -474,8 +584,8 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
         <View style={styles.netTotalBlock}>
           <Text style={styles.netTotalLabel}>Net Total</Text>
           <View style={styles.amountRow}>
-            <Text style={styles.amountWhole}>{currencySymbol}0.</Text>
-            <Text style={styles.amountCents}>00</Text>
+            <Text style={styles.amountWhole}>{netWhole}</Text>
+            <Text style={styles.amountCents}>{netFrac}</Text>
           </View>
           <Text style={styles.monthComparison}>-- vs last month</Text>
         </View>
@@ -485,22 +595,45 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
             accentColor={figmaColors.success["700"]}
             icon="wallet-2-fill"
             label="Income"
-            value={`${currencySymbol}0.00`}
+            value={formatCents(incomeCents, currencySymbol)}
           />
           <View style={styles.transactionSummaryDivider} />
           <TransactionSummary
             accentColor={figmaColors.error["700"]}
             icon="wallet-5-fill"
             label="Expense"
-            value={`${currencySymbol}0.00`}
+            value={formatCents(expenseCents, currencySymbol)}
           />
         </View>
       </View>
 
       {isCalendarView ? (
         <CalendarMonthGrid selectedMonth={selectedMonth} />
-      ) : (
+      ) : monthTransactions.length === 0 ? (
         <EmptyLogState />
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.txListContent}
+          showsVerticalScrollIndicator={false}
+          style={styles.txList}
+        >
+          {dayGroups.map((group) => (
+            <View key={group.dateKey}>
+              <DateGroupHeader
+                currencySymbol={currencySymbol}
+                date={group.date}
+                netCents={group.netCents}
+              />
+              {group.transactions.map((tx) => (
+                <TransactionRow
+                  currencySymbol={currencySymbol}
+                  key={tx.id}
+                  transaction={tx}
+                />
+              ))}
+            </View>
+          ))}
+        </ScrollView>
       )}
 
       <Pressable
@@ -519,15 +652,10 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
       <View style={[styles.tabBar, { paddingBottom: insets.bottom + 4 }]}>
         {homeTabs.map((tab, index) => {
           const isActive = index === 0;
-
           return (
             <View key={tab.label} style={styles.tabBarItem}>
               <MingCuteIcon
-                color={
-                  isActive
-                    ? figmaColors.blue["500"]
-                    : figmaColors.grayNeutral["400"]
-                }
+                color={isActive ? figmaColors.blue["500"] : figmaColors.grayNeutral["400"]}
                 name={tab.icon}
                 size={26}
               />
@@ -545,6 +673,17 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
         selectedMonth={selectedMonth}
         visible={isMonthYearPickerOpen}
       />
+
+      <ToastNotification
+        message={
+          transactions[0]?.type === "income"
+            ? "Your income has been recorded"
+            : transactions[0]?.type === "transfer"
+              ? "Your transfer has been recorded"
+              : "Your expense has been recorded"
+        }
+        visible={showToast}
+      />
     </SafeAreaView>
   );
 }
@@ -558,6 +697,119 @@ function EmptyLogState() {
         Press the plus button to{"\n"}add your first entry
       </Text>
     </View>
+  );
+}
+
+function DateGroupHeader({
+  currencySymbol,
+  date,
+  netCents,
+}: {
+  currencySymbol: string;
+  date: Date;
+  netCents: number;
+}) {
+  const label = format(date, "EEE, d MMM");
+  const sign = netCents >= 0 ? "+" : "−";
+  return (
+    <View style={styles.dateGroupHeader}>
+      <Text style={styles.dateGroupLabel}>{label}</Text>
+      <Text style={styles.dateGroupNet}>
+        {sign}{formatCents(Math.abs(netCents), currencySymbol)}
+      </Text>
+    </View>
+  );
+}
+
+function TransactionRow({
+  currencySymbol,
+  transaction,
+}: {
+  currencySymbol: string;
+  transaction: Transaction;
+}) {
+  const isIncome = transaction.type === "income";
+  const isTransfer = transaction.type === "transfer";
+  const amountColor = isIncome
+    ? figmaColors.success["600"]
+    : isTransfer
+      ? figmaColors.grayNeutral["600"]
+      : figmaColors.error["600"];
+  const prefix = isIncome ? "+" : isTransfer ? "" : "−";
+  const bgColor = transaction.categoryColor ?? categoryColor(transaction.categoryName);
+  const title = transaction.description.trim() || transaction.categoryName;
+
+  return (
+    <View style={styles.txRow}>
+      <View style={[styles.txIconCircle, { backgroundColor: bgColor }]}>
+        <Text style={styles.txEmoji}>
+          {transaction.categoryEmoji || "💰"}
+        </Text>
+      </View>
+      <View style={styles.txMeta}>
+        <Text numberOfLines={1} style={styles.txTitle}>{title}</Text>
+        <Text numberOfLines={1} style={styles.txAccount}>
+          {transaction.accountName}
+        </Text>
+      </View>
+      <Text style={[styles.txAmount, { color: amountColor }]}>
+        {prefix}{formatCents(transaction.amountCents, currencySymbol)}
+      </Text>
+    </View>
+  );
+}
+
+function ToastCheckIcon() {
+  return (
+    <Svg fill="none" height={22} viewBox="0 0 22 22" width={22}>
+      <Circle cx="11" cy="11" fill={figmaColors.base.white} r="11" />
+      <Path
+        d="M6.5 11.5L9.5 14.5L15.5 8"
+        stroke={figmaColors.grayNeutral["900"]}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+      />
+    </Svg>
+  );
+}
+
+function ToastNotification({
+  message,
+  visible,
+}: {
+  message: string;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(20)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+        Animated.timing(translateY, { toValue: 0, duration: 250, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+        Animated.timing(translateY, { toValue: 20, duration: 200, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [visible, opacity, translateY]);
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.toast,
+        { bottom: insets.bottom + 80, opacity, transform: [{ translateY }] },
+      ]}
+    >
+      <ToastCheckIcon />
+      <Text style={styles.toastText}>{message}</Text>
+    </Animated.View>
   );
 }
 
@@ -1725,5 +1977,86 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.medium,
     fontSize: 12,
     lineHeight: 16,
+  },
+  txList: {
+    flex: 1,
+  },
+  txListContent: {
+    paddingBottom: 100,
+  },
+  dateGroupHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 20,
+    paddingBottom: 6,
+  },
+  dateGroupLabel: {
+    color: figmaColors.grayNeutral["500"],
+    fontFamily: fontFamily.semiBold,
+    fontSize: 13,
+    letterSpacing: -0.1,
+  },
+  dateGroupNet: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 14,
+    letterSpacing: -0.15,
+  },
+  txRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  txIconCircle: {
+    alignItems: "center",
+    borderRadius: 999,
+    height: 46,
+    justifyContent: "center",
+    width: 46,
+  },
+  txEmoji: {
+    fontSize: 22,
+  },
+  txMeta: {
+    flex: 1,
+    gap: 2,
+  },
+  txTitle: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 15,
+    letterSpacing: -0.15,
+  },
+  txAccount: {
+    color: figmaColors.grayNeutral["500"],
+    fontFamily: fontFamily.medium,
+    fontSize: 12,
+    letterSpacing: -0.08,
+  },
+  txAmount: {
+    fontFamily: fontFamily.medium,
+    fontSize: 15,
+    letterSpacing: -0.15,
+  },
+  toast: {
+    alignItems: "center",
+    alignSelf: "center",
+    backgroundColor: figmaColors.grayNeutral["900"],
+    borderRadius: 999,
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    position: "absolute",
+  },
+  toastText: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.medium,
+    fontSize: 14,
+    letterSpacing: -0.1,
   },
 });
