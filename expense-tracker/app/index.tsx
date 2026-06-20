@@ -684,6 +684,7 @@ function MonthPickerColumn({
     <View style={styles.monthPickerColumnWrapper}>
       <Text style={styles.monthPickerColumnLabel}>{label}</Text>
       <View style={styles.monthPickerColumnInner}>
+        <View pointerEvents="none" style={styles.monthPickerSelectionIndicator} />
         <ScrollView
           ref={scrollRef}
           bounces={false}
@@ -695,13 +696,7 @@ function MonthPickerColumn({
           snapToInterval={MONTH_PICKER_ITEM_HEIGHT}
         >
           {items.map((item, i) => (
-            <View
-              key={item}
-              style={[
-                styles.monthPickerItem,
-                i === selectedIndex && styles.monthPickerItemSelected,
-              ]}
-            >
+            <View key={item} style={styles.monthPickerItem}>
               <Text
                 style={[
                   styles.monthPickerItemText,
@@ -1388,7 +1383,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   monthPickerBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     backgroundColor: figmaColors.base.overlay,
   },
   monthPickerContainer: {
@@ -1470,6 +1469,15 @@ const styles = StyleSheet.create({
   },
   monthPickerItemSelected: {
     backgroundColor: figmaColors.grayNeutral["900"],
+  },
+  monthPickerSelectionIndicator: {
+    backgroundColor: figmaColors.grayNeutral["900"],
+    borderRadius: 10,
+    height: MONTH_PICKER_ITEM_HEIGHT,
+    left: 6,
+    position: "absolute",
+    right: 6,
+    top: MONTH_PICKER_ITEM_HEIGHT * 2,
   },
   monthPickerItemText: {
     color: figmaColors.grayNeutral["400"],
@@ -1585,7 +1593,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   pickerBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     backgroundColor: figmaColors.base.overlay,
   },
   pickerSafeArea: {

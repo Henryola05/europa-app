@@ -336,6 +336,90 @@ const categoryColors: Record<string, string> = {
   Other: "#6b7280",
 };
 
+type AccountGroup =
+  | "Cash"
+  | "Accounts"
+  | "Credit Card"
+  | "Debit Card"
+  | "Savings"
+  | "Investments"
+  | "Top-Up/Prepaid"
+  | "Overdrafts"
+  | "Loan"
+  | "Insurance"
+  | "Mobile Money"
+  | "Others";
+
+type Account = {
+  id: string;
+  name: string;
+  group: AccountGroup;
+  balanceCents: number;
+};
+
+type AccountGroupData = {
+  group: AccountGroup;
+  totalCents: number;
+  accounts: Account[];
+};
+
+const accountGroupOrder: AccountGroup[] = [
+  "Cash",
+  "Accounts",
+  "Credit Card",
+  "Debit Card",
+  "Savings",
+  "Investments",
+  "Top-Up/Prepaid",
+  "Overdrafts",
+  "Loan",
+  "Insurance",
+  "Mobile Money",
+  "Others",
+];
+
+const ACCOUNT_ITEM_HEIGHT = 52;
+
+const defaultAccounts: Account[] = [
+  { id: "cash-wallet", name: "Cash Wallet", group: "Cash", balanceCents: 325000 },
+  { id: "chase", name: "Chase", group: "Accounts", balanceCents: 1248000 },
+  { id: "wells-fargo", name: "Wells Fargo", group: "Accounts", balanceCents: 792000 },
+  { id: "venmo", name: "Venmo", group: "Mobile Money", balanceCents: 185000 },
+  { id: "cash-app", name: "Cash App", group: "Mobile Money", balanceCents: 230000 },
+];
+
+function groupAccounts(accounts: Account[]): AccountGroupData[] {
+  return accountGroupOrder
+    .map((group) => {
+      const items = accounts.filter((a) => a.group === group);
+      return {
+        group,
+        totalCents: items.reduce((sum, a) => sum + a.balanceCents, 0),
+        accounts: items,
+      };
+    })
+    .filter((g) => g.accounts.length > 0);
+}
+
+function reorderAccountsInGroup(
+  accounts: Account[],
+  group: AccountGroup,
+  orderedIds: string[],
+): Account[] {
+  const ordered = orderedIds
+    .map((id) => accounts.find((a) => a.id === id))
+    .filter((a): a is Account => a !== undefined);
+  let idx = 0;
+  return accounts.map((a) => (a.group === group ? ordered[idx++] ?? a : a));
+}
+
+type CreateAccountValues = {
+  groupId: AccountGroup;
+  name: string;
+  balance: number;
+  description?: string;
+};
+
 function PencilIcon() {
   return (
     <Svg fill="none" height={20} viewBox="0 0 24 24" width={20}>
@@ -823,6 +907,726 @@ function NewCategorySheet({
   );
 }
 
+function GroupPickerSheet({
+  onClose,
+  onSelect,
+  selected,
+  visible,
+}: {
+  onClose: () => void;
+  onSelect: (group: AccountGroup) => void;
+  selected: AccountGroup | null;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const translateY = useRef(new Animated.Value(500)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+
+  const closeSheet = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+    ]).start(({ finished }) => { if (finished) onClose(); });
+  }, [backdropOpacity, onClose, translateY]);
+
+  useEffect(() => {
+    if (visible) {
+      translateY.setValue(500);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
+        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
+      ]).start();
+    } else {
+      backdropOpacity.setValue(0);
+      translateY.setValue(500);
+    }
+  }, [backdropOpacity, translateY, visible]);
+
+  return (
+    <Modal animationType="none" onRequestClose={closeSheet} transparent visible={visible}>
+      <View style={styles.categorySheetRoot}>
+        <Animated.View style={[styles.categorySheetBackdrop, { opacity: backdropOpacity }]}>
+          <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
+        </Animated.View>
+        <View pointerEvents="box-none" style={styles.categorySheetContainer}>
+          <Animated.View
+            style={[
+              styles.categorySheet,
+              { paddingBottom: Math.max(insets.bottom, 16) },
+              { transform: [{ translateY }] },
+            ]}
+          >
+            <View style={styles.categorySheetHeader}>
+              <Text style={styles.categorySheetTitle}>Account Group</Text>
+              <Pressable
+                accessibilityLabel="Close group picker"
+                accessibilityRole="button"
+                onPress={closeSheet}
+                style={styles.categoryHeaderButton}
+              >
+                <CloseIcon />
+              </Pressable>
+            </View>
+            <View style={styles.categoryDivider} />
+            <View style={styles.categoryGrid}>
+              {accountGroupOrder.map((group) => (
+                <Pressable
+                  accessibilityLabel={`Select ${group}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: selected === group }}
+                  key={group}
+                  onPress={() => { onSelect(group); closeSheet(); }}
+                  style={[styles.categoryChip, selected === group && styles.categoryChipSelected]}
+                >
+                  <Text style={[styles.categoryChipText, selected === group && styles.categoryChipTextSelected]}>
+                    {group}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </Animated.View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function CreateAccountBottomSheet({
+  groups,
+  onClose,
+  onSubmit,
+  selectedCurrency,
+  visible,
+}: {
+  groups: AccountGroup[];
+  onClose: () => void;
+  onSubmit: (values: CreateAccountValues) => Promise<void> | void;
+  selectedCurrency: Currency;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const translateY = useRef(new Animated.Value(600)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+
+  const [selectedGroup, setSelectedGroup] = useState<AccountGroup | null>(null);
+  const [name, setName] = useState("");
+  const [balanceCents, setBalanceCents] = useState(0);
+  const [description, setDescription] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGroupPickerOpen, setIsGroupPickerOpen] = useState(false);
+  const [isBalanceSheetOpen, setIsBalanceSheetOpen] = useState(false);
+  const [localCurrency, setLocalCurrency] = useState<Currency>(selectedCurrency);
+
+  const canSubmit = selectedGroup !== null && name.trim().length > 0 && !isSubmitting;
+  const currencySymbol = currencySymbols[localCurrency.code] ?? localCurrency.code;
+
+  const closeSheet = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+    ]).start(({ finished }) => { if (finished) onClose(); });
+  }, [backdropOpacity, onClose, translateY]);
+
+  useEffect(() => {
+    if (visible) {
+      translateY.setValue(600);
+      setSelectedGroup(null);
+      setName("");
+      setBalanceCents(0);
+      setLocalCurrency(selectedCurrency);
+      setDescription("");
+      setIsSubmitting(false);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
+        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
+      ]).start();
+    } else {
+      backdropOpacity.setValue(0);
+      translateY.setValue(600);
+    }
+  }, [backdropOpacity, translateY, visible]);
+
+  const handleSubmit = useCallback(async () => {
+    if (!canSubmit || !selectedGroup) return;
+    setIsSubmitting(true);
+    try {
+      await onSubmit({
+        groupId: selectedGroup,
+        name: name.trim(),
+        balance: balanceCents / 100,
+        description: description.trim() || undefined,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [balanceCents, canSubmit, description, name, onSubmit, selectedGroup]);
+
+  return (
+    <Modal animationType="none" onRequestClose={closeSheet} transparent visible={visible}>
+      <View style={styles.categorySheetRoot}>
+        <Animated.View style={[styles.categorySheetBackdrop, { opacity: backdropOpacity }]}>
+          <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
+        </Animated.View>
+
+        <View pointerEvents="box-none" style={styles.categorySheetContainer}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+            <Animated.View
+              style={[
+                styles.createAccountSheet,
+                { paddingBottom: Math.max(insets.bottom, 16) },
+                { transform: [{ translateY }] },
+              ]}
+            >
+              {/* Header */}
+              <View style={styles.categorySheetHeader}>
+                <Text style={styles.categorySheetTitle}>Accounts</Text>
+                <Pressable
+                  accessibilityLabel="Close account form"
+                  accessibilityRole="button"
+                  onPress={closeSheet}
+                  style={styles.categoryHeaderButton}
+                >
+                  <CloseIcon />
+                </Pressable>
+              </View>
+              <View style={styles.categoryDivider} />
+
+              {/* Form fields */}
+              <ScrollView
+                bounces={false}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {/* Group row */}
+                <View style={styles.createAccountRow}>
+                  <Text style={styles.createAccountLabel}>Group</Text>
+                  <Pressable
+                    accessibilityLabel={selectedGroup ?? "Select group"}
+                    accessibilityRole="button"
+                    onPress={() => setIsGroupPickerOpen(true)}
+                    style={[
+                      styles.createAccountControl,
+                      !!selectedGroup && styles.createAccountControlFilled,
+                    ]}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.createAccountControlText,
+                        !selectedGroup && styles.createAccountPlaceholder,
+                        !!selectedGroup && styles.createAccountControlTextFilled,
+                      ]}
+                    >
+                      {selectedGroup ?? "Select group"}
+                    </Text>
+                  </Pressable>
+                </View>
+                <View style={styles.createAccountDivider} />
+
+                {/* Name row */}
+                <View style={styles.createAccountRow}>
+                  <Text style={styles.createAccountLabel}>Name</Text>
+                  <View
+                    style={[
+                      styles.createAccountInputWrapper,
+                      !!name && styles.createAccountInputWrapperFilled,
+                    ]}
+                  >
+                    <Text style={styles.createAccountInputSizer} numberOfLines={1}>
+                      {name || "Account name"}
+                    </Text>
+                    <TextInput
+                      autoCapitalize="words"
+                      cursorColor={figmaColors.blue["500"]}
+                      onChangeText={setName}
+                      placeholder="Account name"
+                      placeholderTextColor={figmaColors.grayNeutral["400"]}
+                      returnKeyType="next"
+                      style={[
+                        StyleSheet.absoluteFill,
+                        styles.createAccountInputText,
+                        !!name && styles.createAccountInputTextFilled,
+                      ]}
+                      value={name}
+                    />
+                  </View>
+                </View>
+                <View style={styles.createAccountDivider} />
+
+                {/* Balance row */}
+                <View style={styles.createAccountRow}>
+                  <Text style={styles.createAccountLabel}>Balance</Text>
+                  <Pressable
+                    accessibilityLabel={balanceCents > 0 ? formatAmountLabel(balanceCents, currencySymbol) : "Enter balance"}
+                    accessibilityRole="button"
+                    onPress={() => setIsBalanceSheetOpen(true)}
+                    style={[
+                      styles.createAccountControl,
+                      balanceCents > 0 && styles.createAccountControlFilled,
+                    ]}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.createAccountControlText,
+                        balanceCents === 0 && styles.createAccountPlaceholder,
+                        balanceCents > 0 && styles.createAccountControlTextFilled,
+                      ]}
+                    >
+                      {balanceCents > 0 ? formatAmountLabel(balanceCents, currencySymbol) : "Current balance"}
+                    </Text>
+                  </Pressable>
+                </View>
+                <View style={styles.createAccountDivider} />
+
+                {/* Description section (stacked) */}
+                <View style={styles.createAccountDescriptionSection}>
+                  <Text style={styles.createAccountLabel}>Description</Text>
+                  <TextInput
+                    cursorColor={figmaColors.blue["500"]}
+                    multiline
+                    onChangeText={setDescription}
+                    placeholder="Add details about this account (optional)"
+                    placeholderTextColor={figmaColors.grayNeutral["400"]}
+                    style={styles.createAccountDescriptionInput}
+                    textAlignVertical="top"
+                    value={description}
+                  />
+                </View>
+              </ScrollView>
+
+              {/* Submit button */}
+              <Pressable
+                accessibilityLabel={isSubmitting ? "Adding account…" : "Add account"}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !canSubmit }}
+                disabled={!canSubmit}
+                onPress={handleSubmit}
+                style={[
+                  styles.createAccountButton,
+                  !canSubmit && styles.createAccountButtonDisabled,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.createAccountButtonText,
+                    !canSubmit && styles.createAccountButtonTextDisabled,
+                  ]}
+                >
+                  {isSubmitting ? "Adding…" : "Add account"}
+                </Text>
+              </Pressable>
+            </Animated.View>
+          </KeyboardAvoidingView>
+        </View>
+      </View>
+
+      <GroupPickerSheet
+        onClose={() => setIsGroupPickerOpen(false)}
+        onSelect={setSelectedGroup}
+        selected={selectedGroup}
+        visible={isGroupPickerOpen}
+      />
+
+      <AmountInputSheet
+        amountCents={balanceCents}
+        onChangeAmount={setBalanceCents}
+        onClose={() => setIsBalanceSheetOpen(false)}
+        onSelectCurrency={setLocalCurrency}
+        selectedCurrency={localCurrency}
+        visible={isBalanceSheetOpen}
+      />
+    </Modal>
+  );
+}
+
+function AccountEditRow({
+  account,
+  isDragging,
+  onDelete,
+  onDragEnd,
+  onDragMove,
+  onDragStart,
+  onPress,
+  shift,
+}: {
+  account: Account;
+  isDragging: boolean;
+  onDelete: () => void;
+  onDragEnd: (dy: number) => void;
+  onDragMove: (dy: number) => void;
+  onDragStart: () => void;
+  onPress: () => void;
+  shift: number;
+}) {
+  const shiftAnim = useRef(new Animated.Value(0)).current;
+  const dragTranslate = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(Animated.add(shiftAnim, dragTranslate)).current;
+
+  const onDragStartRef = useRef(onDragStart);
+  const onDragMoveRef = useRef(onDragMove);
+  const onDragEndRef = useRef(onDragEnd);
+  onDragStartRef.current = onDragStart;
+  onDragMoveRef.current = onDragMove;
+  onDragEndRef.current = onDragEnd;
+
+  useEffect(() => {
+    Animated.spring(shiftAnim, {
+      bounciness: 0,
+      speed: 20,
+      toValue: isDragging ? 0 : shift,
+      useNativeDriver: false,
+    }).start();
+  }, [isDragging, shift, shiftAnim]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        dragTranslate.setValue(0);
+        onDragStartRef.current();
+      },
+      onPanResponderMove: (_, gs) => {
+        dragTranslate.setValue(gs.dy);
+        onDragMoveRef.current(gs.dy);
+      },
+      onPanResponderRelease: (_, gs) => {
+        dragTranslate.setValue(0);
+        onDragEndRef.current(gs.dy);
+      },
+      onPanResponderTerminate: (_, gs) => {
+        dragTranslate.setValue(0);
+        onDragEndRef.current(gs?.dy ?? 0);
+      },
+    }),
+  ).current;
+
+  return (
+    <Animated.View
+      style={[
+        styles.accountEditRow,
+        isDragging && styles.accountEditRowDragging,
+        { transform: [{ translateY }], zIndex: isDragging ? 10 : 0 },
+      ]}
+    >
+      <Pressable
+        accessibilityLabel={`Delete ${account.name}`}
+        accessibilityRole="button"
+        hitSlop={8}
+        onPress={onDelete}
+      >
+        <MinusCircleIcon />
+      </Pressable>
+      <Pressable
+        accessibilityLabel={account.name}
+        accessibilityRole="button"
+        onPress={onPress}
+        style={styles.accountEditNameArea}
+      >
+        <Text style={styles.accountEditName}>{account.name}</Text>
+      </Pressable>
+      <Text style={styles.accountEditBalance}>{formatAmountLabel(account.balanceCents)}</Text>
+      <View {...panResponder.panHandlers}>
+        <DragHandleIcon />
+      </View>
+    </Animated.View>
+  );
+}
+
+function AccountsBottomSheet({
+  groups,
+  onClose,
+  onNewAccount,
+  onRemoveAccount,
+  onReorderAccounts,
+  onSelectAccount,
+  selectedAccountId,
+  visible,
+}: {
+  groups: AccountGroupData[];
+  onClose: () => void;
+  onNewAccount: () => void;
+  onRemoveAccount: (id: string) => void;
+  onReorderAccounts: (group: AccountGroup, orderedIds: string[]) => void;
+  onSelectAccount: (account: Account) => void;
+  selectedAccountId: string | null;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const translateY = useRef(new Animated.Value(500)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+
+  const [dragGroup, setDragGroup] = useState<AccountGroup | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [snapTarget, setSnapTarget] = useState<number | null>(null);
+  const dragGroupRef = useRef<AccountGroup | null>(null);
+  const dragIndexRef = useRef<number | null>(null);
+  const snapTargetRef = useRef<number | null>(null);
+  const groupLengthRef = useRef<Record<string, number>>({});
+
+  groups.forEach((g) => { groupLengthRef.current[g.group] = g.accounts.length; });
+
+  const closeSheet = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) onClose();
+    });
+  }, [backdropOpacity, onClose, translateY]);
+
+  useEffect(() => {
+    if (visible) {
+      translateY.setValue(500);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
+        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
+      ]).start();
+    } else {
+      backdropOpacity.setValue(0);
+      translateY.setValue(500);
+    }
+  }, [backdropOpacity, translateY, visible]);
+
+  const handleDragStart = useCallback((group: AccountGroup, index: number) => {
+    dragGroupRef.current = group;
+    dragIndexRef.current = index;
+    snapTargetRef.current = index;
+    setDragGroup(group);
+    setDragIndex(index);
+    setSnapTarget(index);
+  }, []);
+
+  const handleDragMove = useCallback((group: AccountGroup, dy: number) => {
+    if (dragIndexRef.current === null) return;
+    const len = groupLengthRef.current[group] ?? 1;
+    const to = Math.max(0, Math.min(len - 1, dragIndexRef.current + Math.round(dy / ACCOUNT_ITEM_HEIGHT)));
+    if (to !== snapTargetRef.current) {
+      snapTargetRef.current = to;
+      setSnapTarget(to);
+    }
+  }, []);
+
+  const handleDragEnd = useCallback((group: AccountGroup, dy: number) => {
+    const from = dragIndexRef.current;
+    const to = snapTargetRef.current;
+    if (from !== null && to !== null && from !== to) {
+      const groupData = groups.find((g) => g.group === group);
+      if (groupData) {
+        const newOrder = [...groupData.accounts];
+        const [removed] = newOrder.splice(from, 1);
+        newOrder.splice(to, 0, removed);
+        onReorderAccounts(group, newOrder.map((a) => a.id));
+      }
+    }
+    dragGroupRef.current = null;
+    dragIndexRef.current = null;
+    snapTargetRef.current = null;
+    setDragGroup(null);
+    setDragIndex(null);
+    setSnapTarget(null);
+  }, [groups, onReorderAccounts]);
+
+  const getShift = useCallback((group: AccountGroup, index: number): number => {
+    if (dragGroup !== group || dragIndex === null || snapTarget === null) return 0;
+    if (dragIndex < snapTarget && index > dragIndex && index <= snapTarget) return -ACCOUNT_ITEM_HEIGHT;
+    if (dragIndex > snapTarget && index < dragIndex && index >= snapTarget) return ACCOUNT_ITEM_HEIGHT;
+    return 0;
+  }, [dragGroup, dragIndex, snapTarget]);
+
+  return (
+    <Modal animationType="none" onRequestClose={closeSheet} transparent visible={visible}>
+      <View style={styles.categorySheetRoot}>
+        <Animated.View style={[styles.categorySheetBackdrop, { opacity: backdropOpacity }]}>
+          <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
+        </Animated.View>
+
+        <View pointerEvents="box-none" style={styles.categorySheetContainer}>
+          <Animated.View
+            style={[
+              styles.accountsSheet,
+              { paddingBottom: Math.max(insets.bottom, 16) },
+              { transform: [{ translateY }] },
+            ]}
+          >
+            <View style={styles.categorySheetHeader}>
+              <Text style={styles.categorySheetTitle}>Accounts</Text>
+              <View style={styles.categorySheetHeaderActions}>
+                <Pressable
+                  accessibilityLabel="Add new account"
+                  accessibilityRole="button"
+                  onPress={onNewAccount}
+                  style={styles.categoryHeaderButton}
+                >
+                  <PlusIcon />
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="Close accounts"
+                  accessibilityRole="button"
+                  onPress={closeSheet}
+                  style={styles.categoryHeaderButton}
+                >
+                  <CloseIcon />
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.categoryDivider} />
+
+            <ScrollView
+              contentContainerStyle={styles.accountsSheetList}
+              scrollEnabled={dragIndex === null}
+              showsVerticalScrollIndicator={false}
+            >
+              {groups.map((groupData) => (
+                <View key={groupData.group}>
+                  <View style={styles.accountGroupHeader}>
+                    <Text style={styles.accountGroupName}>{groupData.group}</Text>
+                    <Text style={styles.accountGroupTotal}>
+                      {formatAmountLabel(groupData.totalCents)}
+                    </Text>
+                  </View>
+                  {groupData.accounts.map((account, index) => (
+                    <AccountEditRow
+                      account={account}
+                      isDragging={dragGroup === groupData.group && dragIndex === index}
+                      key={account.id}
+                      onDelete={() => onRemoveAccount(account.id)}
+                      onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
+                      onDragMove={(dy) => handleDragMove(groupData.group, dy)}
+                      onDragStart={() => handleDragStart(groupData.group, index)}
+                      onPress={() => { onSelectAccount(account); closeSheet(); }}
+                      shift={getShift(groupData.group, index)}
+                    />
+                  ))}
+                </View>
+              ))}
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </View>
+
+    </Modal>
+  );
+}
+
+function AccountPickerSheet({
+  accounts,
+  onClose,
+  onEditAccounts,
+  onNewAccount,
+  onSelectAccount,
+  selectedAccount,
+  visible,
+}: {
+  accounts: Account[];
+  onClose: () => void;
+  onEditAccounts: () => void;
+  onNewAccount: () => void;
+  onSelectAccount: (account: Account) => void;
+  selectedAccount: Account | null;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const translateY = useRef(new Animated.Value(500)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+
+  const closeSheet = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) onClose();
+    });
+  }, [backdropOpacity, onClose, translateY]);
+
+  useEffect(() => {
+    if (visible) {
+      translateY.setValue(500);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
+        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
+      ]).start();
+    } else {
+      backdropOpacity.setValue(0);
+      translateY.setValue(500);
+    }
+  }, [backdropOpacity, translateY, visible]);
+
+  return (
+    <Modal animationType="none" onRequestClose={closeSheet} transparent visible={visible}>
+      <View style={styles.categorySheetRoot}>
+        <Animated.View style={[styles.categorySheetBackdrop, { opacity: backdropOpacity }]}>
+          <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
+        </Animated.View>
+
+        <View pointerEvents="box-none" style={styles.categorySheetContainer}>
+          <Animated.View
+            style={[
+              styles.categorySheet,
+              { paddingBottom: Math.max(insets.bottom, 16) },
+              { transform: [{ translateY }] },
+            ]}
+          >
+            <View style={styles.categorySheetHeader}>
+              <Text style={styles.categorySheetTitle}>Accounts</Text>
+              <View style={styles.categorySheetHeaderActions}>
+                <Pressable
+                  accessibilityLabel="Edit accounts"
+                  accessibilityRole="button"
+                  onPress={onEditAccounts}
+                  style={styles.categoryHeaderButton}
+                >
+                  <PencilIcon />
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="Close accounts"
+                  accessibilityRole="button"
+                  onPress={closeSheet}
+                  style={styles.categoryHeaderButton}
+                >
+                  <CloseIcon />
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.categoryDivider} />
+
+            <ScrollView contentContainerStyle={styles.categoryGrid} showsVerticalScrollIndicator={false}>
+              {accounts.map((account) => {
+                const isSelected = selectedAccount?.id === account.id;
+                return (
+                  <Pressable
+                    accessibilityLabel={`Select ${account.name}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isSelected }}
+                    key={account.id}
+                    onPress={() => { onSelectAccount(account); closeSheet(); }}
+                    style={[styles.categoryChip, isSelected && styles.categoryChipSelected]}
+                  >
+                    <Text style={[styles.categoryChipText, isSelected && styles.categoryChipTextSelected]}>
+                      {account.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+              <Pressable
+                accessibilityLabel="New account"
+                accessibilityRole="button"
+                onPress={onNewAccount}
+                style={styles.categoryChip}
+              >
+                <Text style={styles.categoryChipText}>+ New account</Text>
+              </Pressable>
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function PickerColumn({
   items,
   label,
@@ -857,6 +1661,8 @@ function PickerColumn({
     <View style={styles.pickerColumnWrapper}>
       <Text style={styles.pickerColumnLabel}>{label}</Text>
       <View style={styles.pickerColumnInner}>
+        {/* Fixed selection indicator — sits behind the scrolling content */}
+        <View pointerEvents="none" style={styles.pickerSelectionIndicator} />
         <ScrollView
           ref={scrollRef}
           bounces={false}
@@ -868,13 +1674,7 @@ function PickerColumn({
           snapToInterval={PICKER_ITEM_HEIGHT}
         >
           {items.map((item, i) => (
-            <View
-              key={item}
-              style={[
-                styles.pickerItem,
-                i === selectedIndex && styles.pickerItemSelected,
-              ]}
-            >
+            <View key={item} style={styles.pickerItem}>
               <Text
                 style={[
                   styles.pickerItemText,
@@ -1997,6 +2797,11 @@ export default function AddEntryScreen() {
   const [selectedCategory, setSelectedCategory] =
     useState<ExpenseCategory | null>(null);
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
+  const [localAccounts, setLocalAccounts] = useState<Account[]>(() => [...defaultAccounts]);
+  const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
+  const [isAccountPickerOpen, setIsAccountPickerOpen] = useState(false);
+  const [isAccountsEditOpen, setIsAccountsEditOpen] = useState(false);
+  const [isCreateAccountOpen, setIsCreateAccountOpen] = useState(false);
 
   const currencySymbol = currencySymbols[selectedCurrency.code] ?? selectedCurrency.code;
   const hasAmount = amountCents > 0;
@@ -2081,7 +2886,12 @@ export default function AddEntryScreen() {
               : "e.g 🍜 food"}
           </SentencePill>
           <Text style={styles.sentenceWord}>from</Text>
-          <SentencePill>e.g cash wallet</SentencePill>
+          <SentencePill
+            onPress={() => setIsAccountPickerOpen(true)}
+            variant={selectedAccount ? "filled" : "default"}
+          >
+            {selectedAccount ? selectedAccount.name : "e.g cash wallet"}
+          </SentencePill>
           <Text style={styles.sentenceWord}>on</Text>
           <SentencePill onPress={() => setIsDatePickerOpen(true)} variant="accent">
             {`🗓️ ${format(selectedDate, "d MMMM yyyy")}`}
@@ -2102,12 +2912,6 @@ export default function AddEntryScreen() {
             </Pressable>
           </View>
 
-          <View style={styles.optionRow}>
-            <Text style={styles.optionLabel}>Attach image (optional)</Text>
-            <View style={styles.optionPillDefault}>
-              <Text style={styles.optionPillDefaultText}>Upload</Text>
-            </View>
-          </View>
         </View>
       </ScrollView>
 
@@ -2146,6 +2950,58 @@ export default function AddEntryScreen() {
         onSelectCategory={setSelectedCategory}
         selectedCategory={selectedCategory}
         visible={isCategoryPickerOpen}
+      />
+
+      <AccountPickerSheet
+        accounts={localAccounts}
+        onClose={() => setIsAccountPickerOpen(false)}
+        onEditAccounts={() => {
+          setIsAccountPickerOpen(false);
+          setIsAccountsEditOpen(true);
+        }}
+        onNewAccount={() => {
+          setIsAccountPickerOpen(false);
+          setIsCreateAccountOpen(true);
+        }}
+        onSelectAccount={setSelectedAccount}
+        selectedAccount={selectedAccount}
+        visible={isAccountPickerOpen}
+      />
+
+      <AccountsBottomSheet
+        groups={groupAccounts(localAccounts)}
+        onClose={() => setIsAccountsEditOpen(false)}
+        onNewAccount={() => {
+          setIsAccountsEditOpen(false);
+          setIsCreateAccountOpen(true);
+        }}
+        onRemoveAccount={(id) => setLocalAccounts((prev) => prev.filter((a) => a.id !== id))}
+        onReorderAccounts={(group, ids) =>
+          setLocalAccounts((prev) => reorderAccountsInGroup(prev, group, ids))
+        }
+        onSelectAccount={(account) => {
+          setSelectedAccount(account);
+          setIsAccountsEditOpen(false);
+        }}
+        selectedAccountId={selectedAccount?.id ?? null}
+        visible={isAccountsEditOpen}
+      />
+
+      <CreateAccountBottomSheet
+        groups={accountGroupOrder}
+        onClose={() => setIsCreateAccountOpen(false)}
+        onSubmit={(values) => {
+          const account: Account = {
+            id: Date.now().toString(36),
+            name: values.name,
+            group: values.groupId,
+            balanceCents: Math.round(values.balance * 100),
+          };
+          setLocalAccounts((prev) => [...prev, account]);
+          setIsCreateAccountOpen(false);
+        }}
+        selectedCurrency={selectedCurrency}
+        visible={isCreateAccountOpen}
       />
 
       <DatePickerSheet
@@ -2517,7 +3373,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   categorySheetBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     backgroundColor: figmaColors.base.overlay,
   },
   categorySheetContainer: {
@@ -2571,6 +3431,201 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
     paddingBottom: 8,
+  },
+  accountGroupChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  createAccountSheet: {
+    backgroundColor: figmaColors.base.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 24,
+  },
+  createAccountRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+  },
+  createAccountLabel: {
+    color: figmaColors.grayNeutral["700"],
+    fontFamily: fontFamily.medium,
+    fontSize: 16,
+    letterSpacing: -0.2,
+    lineHeight: 22,
+  },
+  createAccountControl: {
+    backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  createAccountControlFilled: {
+    backgroundColor: figmaColors.blue["50"],
+  },
+  createAccountControlText: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.medium,
+    fontSize: 15,
+    letterSpacing: -0.15,
+    lineHeight: 20,
+  },
+  createAccountControlTextFilled: {
+    color: figmaColors.blue["600"],
+  },
+  createAccountPlaceholder: {
+    color: figmaColors.grayNeutral["400"],
+  },
+  createAccountInputWrapper: {
+    backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  createAccountInputWrapperFilled: {
+    backgroundColor: figmaColors.blue["50"],
+  },
+  createAccountInputSizer: {
+    color: "transparent",
+    fontFamily: fontFamily.medium,
+    fontSize: 15,
+    letterSpacing: -0.15,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  createAccountInputText: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.medium,
+    fontSize: 15,
+    letterSpacing: -0.15,
+    paddingHorizontal: 14,
+    paddingVertical: 0,
+  },
+  createAccountInputTextFilled: {
+    color: figmaColors.blue["600"],
+  },
+  createAccountInput: {
+    backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 10,
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.medium,
+    fontSize: 15,
+    height: 44,
+    letterSpacing: -0.15,
+    paddingHorizontal: 14,
+    paddingVertical: 0,
+  },
+  createAccountDivider: {
+    borderBottomColor: figmaColors.grayNeutral["200"],
+    borderBottomWidth: 1,
+    borderStyle: "dashed",
+  },
+  createAccountDescriptionSection: {
+    gap: 10,
+    paddingBottom: 8,
+    paddingTop: 14,
+  },
+  createAccountDescriptionInput: {
+    backgroundColor: figmaColors.grayNeutral["50"],
+    borderRadius: 10,
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.medium,
+    fontSize: 15,
+    letterSpacing: -0.15,
+    lineHeight: 22,
+    minHeight: 72,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  createAccountButton: {
+    alignItems: "center",
+    backgroundColor: figmaColors.blue["500"],
+    borderRadius: 999,
+    height: 52,
+    justifyContent: "center",
+    marginTop: 12,
+  },
+  createAccountButtonDisabled: {
+    backgroundColor: figmaColors.grayNeutral["100"],
+  },
+  createAccountButtonText: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.bold,
+    fontSize: 16,
+    letterSpacing: -0.2,
+    lineHeight: 22,
+  },
+  createAccountButtonTextDisabled: {
+    color: figmaColors.grayNeutral["400"],
+  },
+  accountsSheet: {
+    backgroundColor: figmaColors.base.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "65%",
+    paddingHorizontal: 20,
+    paddingTop: 24,
+  },
+  accountsSheetList: {
+    paddingBottom: 8,
+  },
+  accountGroupHeader: {
+    alignItems: "center",
+    backgroundColor: figmaColors.grayNeutral["50"],
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 4,
+    paddingVertical: 11,
+  },
+  accountGroupName: {
+    color: figmaColors.grayNeutral["500"],
+    fontFamily: fontFamily.medium,
+    fontSize: 13,
+    letterSpacing: -0.1,
+    lineHeight: 18,
+  },
+  accountGroupTotal: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 15,
+    letterSpacing: -0.15,
+    lineHeight: 20,
+  },
+  accountEditRow: {
+    alignItems: "center",
+    backgroundColor: figmaColors.base.white,
+    flexDirection: "row",
+    gap: 12,
+    minHeight: ACCOUNT_ITEM_HEIGHT,
+    paddingHorizontal: 4,
+    paddingVertical: 8,
+  },
+  accountEditRowDragging: {
+    borderRadius: 12,
+    elevation: 12,
+    shadowColor: figmaColors.base.black,
+    shadowOffset: { height: 8, width: 0 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+  },
+  accountEditNameArea: {
+    flex: 1,
+  },
+  accountEditName: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.medium,
+    fontSize: 16,
+    letterSpacing: -0.2,
+    lineHeight: 22,
+  },
+  accountEditBalance: {
+    color: figmaColors.grayNeutral["400"],
+    fontFamily: fontFamily.medium,
+    fontSize: 14,
+    letterSpacing: -0.1,
+    lineHeight: 20,
   },
   categoryChip: {
     backgroundColor: figmaColors.grayNeutral["100"],
@@ -2866,6 +3921,16 @@ const styles = StyleSheet.create({
   },
   pickerItemSelected: {
     backgroundColor: figmaColors.grayNeutral["900"],
+  },
+  pickerSelectionIndicator: {
+    backgroundColor: figmaColors.grayNeutral["900"],
+    borderRadius: 10,
+    bottom: undefined,
+    height: PICKER_ITEM_HEIGHT,
+    left: 6,
+    position: "absolute",
+    right: 6,
+    top: PICKER_ITEM_HEIGHT * 2,
   },
   pickerItemText: {
     color: figmaColors.grayNeutral["400"],
