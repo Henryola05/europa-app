@@ -35,6 +35,22 @@ const TRANSACTIONS_KEY = "europa:transactions";
 const SPLASH_DURATION_MS = 2500;
 const SHEET_CLOSE_DISTANCE = 120;
 
+const rateCache: Record<string, { rates: Record<string, number>; ts: number }> = {};
+
+async function fetchExchangeRates(base: string): Promise<Record<string, number>> {
+  const cached = rateCache[base];
+  if (cached && Date.now() - cached.ts < 3_600_000) return cached.rates;
+  const res = await fetch(`https://open.er-api.com/v6/latest/${base}`);
+  const json = await res.json() as { rates: Record<string, number> };
+  rateCache[base] = { rates: json.rates, ts: Date.now() };
+  return json.rates;
+}
+
+function convertCents(cents: number, fromCode: string, toCode: string, rates: Record<string, number>): number {
+  if (fromCode === toCode || !rates[fromCode]) return cents;
+  return Math.round((cents / rates[fromCode]) * rates[toCode]);
+}
+
 type Transaction = {
   id: string;
   type: "income" | "expense" | "transfer";
@@ -498,6 +514,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [tabBarHeight, setTabBarHeight] = useState(0);
   const [showToast, setShowToast] = useState(false);
+  const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({});
   const insets = useSafeAreaInsets();
   const currencySymbol = currencySymbols[currency.code] ?? currency.code;
   const selectedMonthLabel = formatMonthYearLabel(selectedMonth);
@@ -516,6 +533,14 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
     }
   }, [recorded]);
 
+  useEffect(() => {
+    const hasForeign = transactions.some((tx) => tx.currencyCode !== currency.code);
+    if (!hasForeign) return;
+    fetchExchangeRates(currency.code)
+      .then(setExchangeRates)
+      .catch(() => {});
+  }, [transactions, currency.code]);
+
   const monthTransactions = useMemo(() =>
     transactions.filter((tx) => {
       const d = new Date(tx.date);
@@ -528,11 +553,12 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   const { incomeCents, expenseCents, netCents } = useMemo(() => {
     let inc = 0, exp = 0;
     for (const tx of monthTransactions) {
-      if (tx.type === "income") inc += tx.amountCents;
-      else if (tx.type === "expense") exp += tx.amountCents;
+      const cents = convertCents(tx.amountCents, tx.currencyCode, currency.code, exchangeRates);
+      if (tx.type === "income") inc += cents;
+      else if (tx.type === "expense") exp += cents;
     }
     return { incomeCents: inc, expenseCents: exp, netCents: inc - exp };
-  }, [monthTransactions]);
+  }, [monthTransactions, exchangeRates, currency.code]);
 
   const lastMonthNetCents = useMemo(() => {
     const prev = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() - 1, 1);
@@ -543,11 +569,12 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
     if (prevTxs.length === 0) return null;
     let inc = 0, exp = 0;
     for (const tx of prevTxs) {
-      if (tx.type === "income") inc += tx.amountCents;
-      else if (tx.type === "expense") exp += tx.amountCents;
+      const cents = convertCents(tx.amountCents, tx.currencyCode, currency.code, exchangeRates);
+      if (tx.type === "income") inc += cents;
+      else if (tx.type === "expense") exp += cents;
     }
     return inc - exp;
-  }, [transactions, selectedMonth]);
+  }, [transactions, selectedMonth, exchangeRates, currency.code]);
 
   const dayGroups = useMemo<DayGroup[]>(() => {
     const map = new Map<string, Transaction[]>();
@@ -561,12 +588,13 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
         dateKey,
         date: new Date(dateKey),
         transactions: txs,
-        netCents: txs.reduce((s, tx) =>
-          tx.type === "income" ? s + tx.amountCents :
-          tx.type === "expense" ? s - tx.amountCents : s, 0),
+        netCents: txs.reduce((s, tx) => {
+          const cents = convertCents(tx.amountCents, tx.currencyCode, currency.code, exchangeRates);
+          return tx.type === "income" ? s + cents : tx.type === "expense" ? s - cents : s;
+        }, 0),
       }))
       .sort((a, b) => b.date.getTime() - a.date.getTime());
-  }, [monthTransactions]);
+  }, [monthTransactions, exchangeRates, currency.code]);
 
   const netAbsCents = Math.abs(netCents);
   const netWhole = `${netCents < 0 ? "−" : ""}${currencySymbol}${Math.floor(netAbsCents / 100).toLocaleString()}.`;
@@ -678,7 +706,9 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
               />
               {group.transactions.map((tx) => (
                 <TransactionRow
+                  currencyCode={currency.code}
                   currencySymbol={currencySymbol}
+                  exchangeRates={exchangeRates}
                   key={tx.id}
                   transaction={tx}
                 />
@@ -775,10 +805,14 @@ function DateGroupHeader({
 }
 
 function TransactionRow({
+  currencyCode,
   currencySymbol,
+  exchangeRates,
   transaction,
 }: {
+  currencyCode: string;
   currencySymbol: string;
+  exchangeRates: Record<string, number>;
   transaction: Transaction;
 }) {
   const isIncome = transaction.type === "income";
@@ -791,6 +825,7 @@ function TransactionRow({
   const prefix = isIncome ? "+" : isTransfer ? "" : "−";
   const bgColor = transaction.categoryColor ?? categoryColor(transaction.categoryName);
   const title = transaction.description.trim() || transaction.categoryName;
+  const displayCents = convertCents(transaction.amountCents, transaction.currencyCode, currencyCode, exchangeRates);
 
   return (
     <View style={styles.txRow}>
@@ -806,7 +841,7 @@ function TransactionRow({
         </Text>
       </View>
       <Text style={[styles.txAmount, { color: amountColor }]}>
-        {prefix}{formatCents(transaction.amountCents, currencySymbol)}
+        {prefix}{formatCents(displayCents, currencySymbol)}
       </Text>
     </View>
   );
