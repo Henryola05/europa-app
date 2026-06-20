@@ -329,6 +329,19 @@ const expenseCategories: ExpenseCategory[] = [
   { emoji: "📦", name: "Other" },
 ];
 
+const incomeCategories: ExpenseCategory[] = [
+  { emoji: "🤑", name: "Allowance" },
+  { emoji: "💼", name: "Salary" },
+  { emoji: "💻", name: "Freelance" },
+  { emoji: "💵", name: "Petty cash" },
+  { emoji: "🎁", name: "Gifts" },
+  { emoji: "💰", name: "Refunds" },
+  { emoji: "📈", name: "Investments" },
+  { emoji: "💸", name: "Bonus" },
+  { emoji: "🛍️", name: "Sales" },
+  { emoji: "📁", name: "Other" },
+];
+
 const categoryColors: Record<string, string> = {
   Food: "#ef4444",
   "Social Life": "#3b82f6",
@@ -345,6 +358,15 @@ const categoryColors: Record<string, string> = {
   Loan: "#64748b",
   Airtime: "#0ea5e9",
   Subscription: "#10b981",
+  Allowance: "#ef4444",
+  Salary: "#3b82f6",
+  Freelance: "#f97316",
+  "Petty cash": "#22c55e",
+  Gifts: "#f59e0b",
+  Refunds: "#8b5cf6",
+  Investments: "#06b6d4",
+  Bonus: "#ec4899",
+  Sales: "#14b8a6",
   Other: "#6b7280",
 };
 
@@ -375,6 +397,7 @@ type StoredTransaction = {
   type: "income" | "expense" | "transfer";
   amountCents: number;
   accountName: string;
+  destinationAccountName?: string;
 };
 
 type AccountGroupData = {
@@ -423,6 +446,11 @@ const defaultAccounts: Account[] = [
 function applyTransactionsToAccounts(accounts: Account[], transactions: StoredTransaction[]): Account[] {
   return accounts.map((account) => {
     const net = transactions.reduce((sum, tx) => {
+      if (tx.type === "transfer") {
+        if (tx.accountName === account.name) return sum - tx.amountCents;
+        if (tx.destinationAccountName === account.name) return sum + tx.amountCents;
+        return sum;
+      }
       if (tx.accountName !== account.name) return sum;
       if (tx.type === "income") return sum + tx.amountCents;
       if (tx.type === "expense") return sum - tx.amountCents;
@@ -2342,11 +2370,15 @@ function CustomIntervalSheet({
 }
 
 function CategoryPickerSheet({
+  categories = expenseCategories,
+  title = "Expense Categories",
   onClose,
   onSelectCategory,
   selectedCategory,
   visible,
 }: {
+  categories?: ExpenseCategory[];
+  title?: string;
   onClose: () => void;
   onSelectCategory: (category: ExpenseCategory) => void;
   selectedCategory: ExpenseCategory | null;
@@ -2362,7 +2394,7 @@ function CategoryPickerSheet({
     color: string;
   } | null>(null);
   const [localCategories, setLocalCategories] = useState<ExpenseCategory[]>(
-    () => [...expenseCategories],
+    () => [...categories],
   );
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [snapTarget, setSnapTarget] = useState<number | null>(null);
@@ -2370,6 +2402,10 @@ function CategoryPickerSheet({
   const snapTargetRef = useRef<number | null>(null);
   const localLengthRef = useRef(localCategories.length);
   localLengthRef.current = localCategories.length;
+
+  useEffect(() => {
+    setLocalCategories([...categories]);
+  }, [categories]);
 
   const closeSheet = useCallback(() => {
     Animated.parallel([
@@ -2515,7 +2551,7 @@ function CategoryPickerSheet({
             ]}
           >
             <View style={styles.categorySheetHeader}>
-              <Text style={styles.categorySheetTitle}>Expense Categories</Text>
+              <Text style={styles.categorySheetTitle}>{title}</Text>
               <View style={styles.categorySheetHeaderActions}>
                 <Pressable
                   accessibilityLabel={
@@ -2650,9 +2686,11 @@ function CategoryPickerSheet({
 
 function DescriptionInput({
   onChangeText,
+  placeholder,
   value,
 }: {
   onChangeText: (text: string) => void;
+  placeholder: string;
   value: string;
 }) {
   const [isFocused, setIsFocused] = useState(false);
@@ -2662,7 +2700,7 @@ function DescriptionInput({
     <View style={[styles.pill, isActive && styles.pillAccent]}>
       {/* Invisible sizer — pill width tracks content or placeholder */}
       <Text numberOfLines={1} style={[styles.pillText, styles.descriptionSizer]}>
-        {value || "e.g jollof and chicken"}
+        {value || placeholder}
       </Text>
       <TextInput
         autoCapitalize="sentences"
@@ -2670,7 +2708,7 @@ function DescriptionInput({
         onBlur={() => setIsFocused(false)}
         onChangeText={onChangeText}
         onFocus={() => setIsFocused(true)}
-        placeholder="e.g jollof and chicken"
+        placeholder={placeholder}
         placeholderTextColor={figmaColors.grayNeutral["400"]}
         returnKeyType="done"
         selectionColor={figmaColors.blue["500"]}
@@ -3195,7 +3233,7 @@ export default function AddEntryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [transactionType, setTransactionType] =
-    useState<TransactionType>("expense");
+    useState<TransactionType>("income");
   const [amountCents, setAmountCents] = useState(0);
   const [description, setDescription] = useState("");
   const [isAmountSheetOpen, setIsAmountSheetOpen] = useState(false);
@@ -3257,7 +3295,13 @@ export default function AddEntryScreen() {
     if (!editBalanceAccountId) return;
     const net = allTransactions.reduce((sum, tx) => {
       const account = localAccounts.find((a) => a.id === editBalanceAccountId);
-      if (!account || tx.accountName !== account.name) return sum;
+      if (!account) return sum;
+      if (tx.type === "transfer") {
+        if (tx.accountName === account.name) return sum - tx.amountCents;
+        if (tx.destinationAccountName === account.name) return sum + tx.amountCents;
+        return sum;
+      }
+      if (tx.accountName !== account.name) return sum;
       if (tx.type === "income") return sum + tx.amountCents;
       if (tx.type === "expense") return sum - tx.amountCents;
       return sum;
@@ -3274,6 +3318,10 @@ export default function AddEntryScreen() {
   }
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [isAccountPickerOpen, setIsAccountPickerOpen] = useState(false);
+  const [transferDestinationAccount, setTransferDestinationAccount] =
+    useState<Account | null>(null);
+  const [isDestinationAccountPickerOpen, setIsDestinationAccountPickerOpen] =
+    useState(false);
   const [isAccountsEditOpen, setIsAccountsEditOpen] = useState(false);
   const [isCreateAccountOpen, setIsCreateAccountOpen] = useState(false);
   const [isImageUploadOpen, setIsImageUploadOpen] = useState(false);
@@ -3283,13 +3331,20 @@ export default function AddEntryScreen() {
   const hasAmount = amountCents > 0;
   const amountLabel = hasAmount
     ? formatAmountLabel(amountCents, currencySymbol)
-    : `e.g ${currencySymbol}500.00`;
+    : `e.g ${currencySymbol}${transactionType !== "expense" ? "1,000.00" : "500.00"}`;
+  const isTransfer = transactionType === "transfer";
+  const canRecord =
+    hasAmount &&
+    (!isTransfer ||
+      (selectedAccount !== null &&
+        transferDestinationAccount !== null &&
+        selectedAccount.id !== transferDestinationAccount.id));
 
   const sentenceVerb =
     transactionType === "income"
-      ? "earned"
+      ? "received"
       : transactionType === "transfer"
-        ? "transferred"
+        ? "moved"
         : "spent";
 
   const recordLabel =
@@ -3305,10 +3360,15 @@ export default function AddEntryScreen() {
       type: transactionType,
       amountCents,
       description,
-      categoryEmoji: selectedCategory?.emoji ?? "",
-      categoryName: selectedCategory?.name ?? "Uncategorized",
-      categoryColor: categoryColors[selectedCategory?.name ?? ""] ?? figmaColors.grayNeutral["300"],
+      categoryEmoji: isTransfer ? "↔️" : selectedCategory?.emoji ?? "",
+      categoryName: isTransfer ? "Transfer" : selectedCategory?.name ?? "Uncategorized",
+      categoryColor: isTransfer
+        ? figmaColors.grayNeutral["400"]
+        : categoryColors[selectedCategory?.name ?? ""] ?? figmaColors.grayNeutral["300"],
       accountName: selectedAccount?.name ?? "",
+      destinationAccountName: isTransfer
+        ? transferDestinationAccount?.name ?? ""
+        : undefined,
       date: selectedDate.toISOString(),
       currencyCode: selectedCurrency.code,
       recurringOption,
@@ -3373,27 +3433,71 @@ export default function AddEntryScreen() {
           >
             {amountLabel}
           </SentencePill>
-          <Text style={styles.sentenceWord}>on</Text>
-          <DescriptionInput
-            onChangeText={setDescription}
-            value={description}
-          />
-          <Text style={styles.sentenceWord}>as</Text>
-          <SentencePill
-            onPress={() => setIsCategoryPickerOpen(true)}
-            variant={selectedCategory ? "filled" : "default"}
-          >
-            {selectedCategory
-              ? `${selectedCategory.emoji} ${selectedCategory.name}`
-              : "e.g 🍜 food"}
-          </SentencePill>
-          <Text style={styles.sentenceWord}>from</Text>
-          <SentencePill
-            onPress={() => setIsAccountPickerOpen(true)}
-            variant={selectedAccount ? "filled" : "default"}
-          >
-            {selectedAccount ? selectedAccount.name : "e.g cash wallet"}
-          </SentencePill>
+
+          {isTransfer ? (
+            <>
+              <Text style={styles.sentenceWord}>from</Text>
+              <SentencePill
+                onPress={() => setIsAccountPickerOpen(true)}
+                variant={selectedAccount ? "filled" : "default"}
+              >
+                {selectedAccount?.name ?? "e.g checking account"}
+              </SentencePill>
+              <Text style={styles.sentenceWord}>to</Text>
+              <SentencePill
+                onPress={() => setIsDestinationAccountPickerOpen(true)}
+                variant={transferDestinationAccount ? "filled" : "default"}
+              >
+                {transferDestinationAccount?.name ?? "e.g joint account"}
+              </SentencePill>
+              <Text style={styles.sentenceWord}>for</Text>
+              <DescriptionInput
+                onChangeText={setDescription}
+                placeholder="e.g rent share"
+                value={description}
+              />
+            </>
+          ) : (
+            <>
+              <Text style={styles.sentenceWord}>
+                {transactionType === "income" ? "for" : "on"}
+              </Text>
+              <DescriptionInput
+                onChangeText={setDescription}
+                placeholder={
+                  transactionType === "income"
+                    ? "e.g logo design"
+                    : "e.g jollof and chicken"
+                }
+                value={description}
+              />
+              <Text style={styles.sentenceWord}>as</Text>
+              <SentencePill
+                onPress={() => setIsCategoryPickerOpen(true)}
+                variant={selectedCategory ? "filled" : "default"}
+              >
+                {selectedCategory
+                  ? `${selectedCategory.emoji} ${selectedCategory.name}`
+                  : transactionType === "income"
+                    ? "e.g 💻 freelance"
+                    : "e.g 🍜 food"}
+              </SentencePill>
+              <Text style={styles.sentenceWord}>
+                {transactionType === "income" ? "into" : "from"}
+              </Text>
+              <SentencePill
+                onPress={() => setIsAccountPickerOpen(true)}
+                variant={selectedAccount ? "filled" : "default"}
+              >
+                {selectedAccount
+                  ? selectedAccount.name
+                  : transactionType === "income"
+                    ? "e.g bank account"
+                    : "e.g cash wallet"}
+              </SentencePill>
+            </>
+          )}
+
           <Text style={styles.sentenceWord}>on</Text>
           <SentencePill onPress={() => setIsDatePickerOpen(true)} variant="accent">
             {`🗓️ ${format(selectedDate, "d MMMM yyyy")}`}
@@ -3461,18 +3565,18 @@ export default function AddEntryScreen() {
       <View style={[styles.footer, { paddingBottom: insets.bottom + 4 }]}>
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: !hasAmount }}
-          disabled={!hasAmount}
+          accessibilityState={{ disabled: !canRecord }}
+          disabled={!canRecord}
           onPress={handleRecord}
           style={[
             styles.recordButton,
-            hasAmount && styles.recordButtonEnabled,
+            canRecord && styles.recordButtonEnabled,
           ]}
         >
           <Text
             style={[
               styles.recordButtonText,
-              hasAmount && styles.recordButtonTextEnabled,
+              canRecord && styles.recordButtonTextEnabled,
             ]}
           >
             {recordLabel}
@@ -3490,9 +3594,15 @@ export default function AddEntryScreen() {
       />
 
       <CategoryPickerSheet
+        categories={
+          transactionType === "income" ? incomeCategories : expenseCategories
+        }
         onClose={() => setIsCategoryPickerOpen(false)}
         onSelectCategory={setSelectedCategory}
         selectedCategory={selectedCategory}
+        title={
+          transactionType === "income" ? "Income Categories" : "Expense Categories"
+        }
         visible={isCategoryPickerOpen}
       />
 
@@ -3507,9 +3617,32 @@ export default function AddEntryScreen() {
           setIsAccountPickerOpen(false);
           setIsCreateAccountOpen(true);
         }}
-        onSelectAccount={setSelectedAccount}
+        onSelectAccount={(account) => {
+          setSelectedAccount(account);
+          if (transferDestinationAccount?.id === account.id) {
+            setTransferDestinationAccount(null);
+          }
+        }}
         selectedAccount={selectedAccount}
         visible={isAccountPickerOpen}
+      />
+
+      <AccountPickerSheet
+        accounts={displayAccounts.filter(
+          (account) => account.id !== selectedAccount?.id,
+        )}
+        onClose={() => setIsDestinationAccountPickerOpen(false)}
+        onEditAccounts={() => {
+          setIsDestinationAccountPickerOpen(false);
+          setIsAccountsEditOpen(true);
+        }}
+        onNewAccount={() => {
+          setIsDestinationAccountPickerOpen(false);
+          setIsCreateAccountOpen(true);
+        }}
+        onSelectAccount={setTransferDestinationAccount}
+        selectedAccount={transferDestinationAccount}
+        visible={isDestinationAccountPickerOpen}
       />
 
       <AccountsBottomSheet

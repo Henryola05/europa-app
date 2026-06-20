@@ -61,6 +61,7 @@ type Transaction = {
   categoryName: string;
   categoryColor?: string;
   accountName: string;
+  destinationAccountName?: string;
   date: string;
   currencyCode: string;
   recurringOption: string;
@@ -90,6 +91,15 @@ const DEFAULT_CATEGORY_COLORS: Record<string, string> = {
   Loan: "#64748b",
   Airtime: "#0ea5e9",
   Subscription: "#10b981",
+  Allowance: "#ef4444",
+  Salary: "#3b82f6",
+  Freelance: "#f97316",
+  "Petty cash": "#22c55e",
+  Gifts: "#f59e0b",
+  Refunds: "#8b5cf6",
+  Investments: "#06b6d4",
+  Bonus: "#ec4899",
+  Sales: "#14b8a6",
   Other: "#6b7280",
 };
 
@@ -1014,7 +1024,9 @@ function TransactionRow({
       <View style={styles.txMeta}>
         <Text numberOfLines={1} style={styles.txTitle}>{title}</Text>
         <Text numberOfLines={1} style={styles.txAccount}>
-          {transaction.accountName}
+          {isTransfer && transaction.destinationAccountName
+            ? `${transaction.accountName} → ${transaction.destinationAccountName}`
+            : transaction.accountName}
         </Text>
       </View>
       <Text style={[styles.txAmount, { color: amountColor }]}>
