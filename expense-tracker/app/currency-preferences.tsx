@@ -14,7 +14,7 @@ const WEEK_START_KEY = "europa:week-start";
 const BUDGET_RESET_KEY = "europa:budget-reset-day";
 
 const PICKER_ITEM_HEIGHT = 52;
-const PICKER_DAYS = Array.from({ length: 28 }, (_, i) => i + 1);
+const PICKER_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
 
 function ordinal(n: number) {
   const s = ["th", "st", "nd", "rd"];
@@ -190,10 +190,16 @@ function BudgetResetPicker({
         <View style={styles.budgetPickerRow}>
           <DayScrollPicker
             value={localValue}
-            onChange={(day) => { setLocalValue(day); onSelect(day); }}
+            onChange={(day) => setLocalValue(day)}
           />
           <Text style={styles.ofTheMonthText}>of the month</Text>
         </View>
+        <Pressable
+          onPress={() => { onSelect(localValue); closeSheet(); }}
+          style={styles.saveButton}
+        >
+          <Text style={styles.saveButtonText}>Save</Text>
+        </Pressable>
       </Animated.View>
     </View>
   );
@@ -316,7 +322,7 @@ export default function CurrencyPreferencesScreen() {
       if (day && DAYS.includes(day as Day)) setStartOfWeek(day as Day);
     }).catch(() => {});
     AsyncStorage.getItem(BUDGET_RESET_KEY).then((val) => {
-      if (val) { const n = parseInt(val, 10); if (n >= 1 && n <= 28) setBudgetResetDay(n); }
+      if (val) { const n = parseInt(val, 10); if (n >= 1 && n <= 31) setBudgetResetDay(n); }
     }).catch(() => {});
   }, []);
 
@@ -573,6 +579,21 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.medium,
     fontSize: 16,
     letterSpacing: -0.18,
+  },
+  saveButton: {
+    alignItems: "center",
+    backgroundColor: figmaColors.blue["500"],
+    borderRadius: 999,
+    height: 56,
+    justifyContent: "center",
+    marginHorizontal: 20,
+    marginBottom: 8,
+  },
+  saveButtonText: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.bold,
+    fontSize: 17,
+    letterSpacing: -0.2,
   },
   dayGrid: {
     flexDirection: "row",

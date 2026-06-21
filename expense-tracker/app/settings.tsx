@@ -43,6 +43,10 @@ const SETTINGS_ICONS = {
     d: "M15 1.66667C15.442 1.66667 15.8659 1.84226 16.1785 2.15482C16.4911 2.46738 16.6667 2.89131 16.6667 3.33333V16.6667C16.6667 17.1087 16.4911 17.5326 16.1785 17.8452C15.8659 18.1577 15.442 18.3333 15 18.3333H5C4.55797 18.3333 4.13405 18.1577 3.82149 17.8452C3.50893 17.5326 3.33333 17.1087 3.33333 16.6667V3.33333C3.33333 2.89131 3.50893 2.46738 3.82149 2.15482C4.13405 1.84226 4.55797 1.66667 5 1.66667H15ZM10 10.8333H7.5C7.27899 10.8333 7.06702 10.9211 6.91074 11.0774C6.75446 11.2337 6.66667 11.4457 6.66667 11.6667C6.66667 11.8877 6.75446 12.0996 6.91074 12.2559C7.06702 12.4122 7.27899 12.5 7.5 12.5H10C10.221 12.5 10.433 12.4122 10.5893 12.2559C10.7455 12.0996 10.8333 11.8877 10.8333 11.6667C10.8333 11.4457 10.7455 11.2337 10.5893 11.0774C10.433 10.9211 10.221 10.8333 10 10.8333ZM12.5 6.66667H7.5C7.2876 6.6669 7.08331 6.74823 6.92886 6.89404C6.77441 7.03985 6.68147 7.23913 6.66902 7.45116C6.65658 7.6632 6.72556 7.87198 6.86189 8.03486C6.99821 8.19774 7.19159 8.30241 7.4025 8.3275L7.5 8.33333H12.5C12.7124 8.3331 12.9167 8.25177 13.0711 8.10596C13.2256 7.96015 13.3185 7.76087 13.331 7.54884C13.3434 7.3368 13.2744 7.12802 13.1381 6.96514C13.0018 6.80226 12.8084 6.69759 12.5975 6.6725L12.5 6.66667Z",
     evenodd: false,
   },
+  bell: {
+    d: "M10 1.66667C8.23333 1.66667 6.55833 2.3625 5.32917 3.59167C4.1 4.82083 3.40417 6.49583 3.40417 8.26667V11.5083L2.24167 13.4917C2.1 13.7333 2.025 14.0083 2.025 14.2917C2.025 15.1583 2.72917 15.8583 3.59583 15.8583H16.4042C17.2708 15.8583 17.975 15.1583 17.975 14.2917C17.975 14.0083 17.9 13.7333 17.7583 13.4917L16.5958 11.5083V8.26667C16.5958 6.49583 15.9 4.82083 14.6708 3.59167C13.4417 2.3625 11.7667 1.66667 10 1.66667ZM8.33333 16.6667C8.33333 17.1087 8.50893 17.5326 8.82149 17.8452C9.13405 18.1577 9.55797 18.3333 10 18.3333C10.442 18.3333 10.8659 18.1577 11.1785 17.8452C11.4911 17.5326 11.6667 17.1087 11.6667 16.6667H8.33333Z",
+    evenodd: false,
+  },
 } as const;
 
 const CHEVRON_PATH =
@@ -105,14 +109,15 @@ type SettingsItem = {
 };
 
 const SETTINGS_ITEMS: SettingsItem[] = [
-  { label: "Personalization",        icon: "palette",   bg: figmaColors.blue["500"]    },
-  { label: "Currency & Preferences", icon: "coin",      bg: figmaColors.warning["500"] },
-  { label: "Categories & Alerts",    icon: "grid",      bg: figmaColors.success["500"] },
-  { label: "Security",               icon: "safeLock",  bg: figmaColors.violet["500"]  },
-  { label: "Data Management",        icon: "server",    bg: figmaColors.cyan["500"]    },
-  { label: "Help & Feedback",        icon: "chat",      bg: figmaColors.pink["500"]    },
-  { label: "Rate & Share",           icon: "share",     bg: figmaColors.yellow["500"]  },
-  { label: "Legal",                  icon: "document",  bg: figmaColors.orange["500"]  },
+  { label: "Personalization",          icon: "palette",   bg: figmaColors.blue["500"]    },
+  { label: "Currency & Preferences",   icon: "coin",      bg: figmaColors.warning["500"] },
+  { label: "Categories & Accounts",    icon: "grid",      bg: figmaColors.success["500"] },
+  { label: "Notifications",            icon: "bell",      bg: figmaColors.error["500"]   },
+  { label: "Security",                 icon: "safeLock",  bg: figmaColors.violet["500"]  },
+  { label: "Data Management",          icon: "server",    bg: figmaColors.cyan["500"]    },
+  { label: "Help & Feedback",          icon: "chat",      bg: figmaColors.pink["500"]    },
+  { label: "Rate & Share",             icon: "share",     bg: figmaColors.yellow["500"]  },
+  { label: "Legal",                    icon: "document",  bg: figmaColors.orange["500"]  },
 ];
 
 const TAB_ICONS = {
@@ -216,6 +221,8 @@ export default function SettingsScreen() {
               onPress={
                 item.label === "Personalization" ? () => router.push("/personalization") :
                 item.label === "Currency & Preferences" ? () => router.push("/currency-preferences") :
+                item.label === "Categories & Accounts" ? () => router.push("/categories-accounts") :
+                item.label === "Notifications" ? () => router.push("/categories-alerts") :
                 item.onPress
               }
               style={({ pressed }) => [
