@@ -402,10 +402,11 @@ function formatSelectedCurrencyName(name: string) {
 }
 
 let appSplashDone = false;
+let cachedHomeCurrency: Currency | null = null;
 
 export default function AppEntryScreen() {
   const [isShowingSplash, setIsShowingSplash] = useState(!appSplashDone);
-  const [homeCurrency, setHomeCurrency] = useState<Currency | null>(null);
+  const [homeCurrency, setHomeCurrency] = useState<Currency | null>(cachedHomeCurrency);
 
   useEffect(() => {
     let isMounted = true;
@@ -418,7 +419,10 @@ export default function AppEntryScreen() {
 
     if (appSplashDone) {
       currencyLoad.then((currency) => {
-        if (isMounted) setHomeCurrency(currency);
+        if (isMounted) {
+          cachedHomeCurrency = currency;
+          setHomeCurrency(currency);
+        }
       });
     } else {
       const splashTimer = new Promise<void>((resolve) =>
@@ -427,6 +431,7 @@ export default function AppEntryScreen() {
       Promise.all([splashTimer, currencyLoad]).then(([, currency]) => {
         if (isMounted) {
           appSplashDone = true;
+          cachedHomeCurrency = currency;
           setHomeCurrency(currency);
           setIsShowingSplash(false);
         }
@@ -439,6 +444,7 @@ export default function AppEntryScreen() {
   }, []);
 
   const handleCurrencySelected = useCallback((currency: Currency) => {
+    cachedHomeCurrency = currency;
     setHomeCurrency(currency);
     AsyncStorage.setItem(HOME_CURRENCY_KEY, currency.code).catch(() => {});
   }, []);
@@ -644,7 +650,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   }, [pendingDeletion, transactions]);
 
   useEffect(() => {
-    if (recorded === "1" || recorded === "deleted") {
+    if (recorded === "1" || recorded === "deleted" || recorded === "saved") {
       setShowToast(true);
       const t = setTimeout(() => setShowToast(false), 3000);
       return () => clearTimeout(t);
@@ -916,11 +922,13 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
         message={
           pendingDeletion || recorded === "deleted"
             ? `Your ${pendingDeletion?.transaction.type ?? deletedType ?? "transaction"} has been deleted`
-            : transactions[0]?.type === "income"
-              ? "Your income has been recorded"
-              : transactions[0]?.type === "transfer"
-                ? "Your transfer has been recorded"
-                : "Your expense has been recorded"
+            : recorded === "saved"
+              ? "Transaction saved"
+              : transactions[0]?.type === "income"
+                ? "Your income has been recorded"
+                : transactions[0]?.type === "transfer"
+                  ? "Your transfer has been recorded"
+                  : "Your expense has been recorded"
         }
         onAction={pendingDeletion ? handleUndoDelete : undefined}
         variant={pendingDeletion || recorded === "deleted" ? "destructive" : "default"}

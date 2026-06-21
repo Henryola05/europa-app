@@ -3418,10 +3418,11 @@ export default function AddEntryScreen() {
   const isTransfer = transactionType === "transfer";
   const canRecord =
     hasAmount &&
-    (!isTransfer ||
-      (selectedAccount !== null &&
-        transferDestinationAccount !== null &&
-        selectedAccount.id !== transferDestinationAccount.id));
+    selectedAccount !== null &&
+    (isTransfer
+      ? transferDestinationAccount !== null &&
+        selectedAccount.id !== transferDestinationAccount.id
+      : selectedCategory !== null);
 
   const sentenceVerb =
     transactionType === "income"
@@ -3476,7 +3477,7 @@ export default function AddEntryScreen() {
     } catch {
       // silently continue — don't block navigation on storage failure
     }
-    router.replace(isEditing ? "/" : "/?recorded=1");
+    router.replace(isEditing ? "/?recorded=saved" : "/?recorded=1");
   }
 
   async function handleDelete() {
