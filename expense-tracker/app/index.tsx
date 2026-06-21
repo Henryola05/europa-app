@@ -884,7 +884,13 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
         {homeTabs.map((tab, index) => {
           const isActive = index === 0;
           return (
-            <View key={tab.label} style={styles.tabBarItem}>
+            <Pressable
+              key={tab.label}
+              onPress={() => {
+                if (tab.label === "Settings") router.push("/settings");
+              }}
+              style={styles.tabBarItem}
+            >
               <MingCuteIcon
                 color={isActive ? figmaColors.blue["500"] : figmaColors.grayNeutral["400"]}
                 name={tab.icon}
@@ -893,7 +899,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
               <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
                 {tab.label}
               </Text>
-            </View>
+            </Pressable>
           );
         })}
       </View>
