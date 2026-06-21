@@ -21,6 +21,7 @@ export type StoredAccount = {
   name: string;
   group: AccountGroup;
   openingBalanceCents: number;
+  currencyCode: string;
 };
 
 export const accountGroupOrder: AccountGroup[] = [
@@ -39,11 +40,11 @@ export const accountGroupOrder: AccountGroup[] = [
 ];
 
 const defaultAccounts: StoredAccount[] = [
-  { id: "cash-wallet", name: "Cash Wallet", group: "Cash", openingBalanceCents: 0 },
-  { id: "chase", name: "Chase", group: "Accounts", openingBalanceCents: 0 },
-  { id: "wells-fargo", name: "Wells Fargo", group: "Accounts", openingBalanceCents: 0 },
-  { id: "venmo", name: "Venmo", group: "Mobile Money", openingBalanceCents: 0 },
-  { id: "cash-app", name: "Cash App", group: "Mobile Money", openingBalanceCents: 0 },
+  { id: "cash-wallet", name: "Cash Wallet", group: "Cash", openingBalanceCents: 0, currencyCode: "USD" },
+  { id: "chase", name: "Chase", group: "Accounts", openingBalanceCents: 0, currencyCode: "USD" },
+  { id: "wells-fargo", name: "Wells Fargo", group: "Accounts", openingBalanceCents: 0, currencyCode: "USD" },
+  { id: "venmo", name: "Venmo", group: "Mobile Money", openingBalanceCents: 0, currencyCode: "USD" },
+  { id: "cash-app", name: "Cash App", group: "Mobile Money", openingBalanceCents: 0, currencyCode: "USD" },
 ];
 
 type AccountsState = {

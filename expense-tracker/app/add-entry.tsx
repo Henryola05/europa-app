@@ -393,10 +393,11 @@ function groupAccounts(accounts: Account[]): AccountGroupData[] {
 }
 
 
-type CreateAccountValues = {
+export type CreateAccountValues = {
   groupId: AccountGroup;
   name: string;
   balance: number;
+  currencyCode: string;
   description?: string;
 };
 
@@ -988,7 +989,7 @@ function GroupPickerSheet({
   );
 }
 
-function CreateAccountBottomSheet({
+export function CreateAccountBottomSheet({
   groups,
   onClose,
   onSubmit,
@@ -1051,6 +1052,7 @@ function CreateAccountBottomSheet({
         groupId: selectedGroup,
         name: name.trim(),
         balance: balanceCents / 100,
+        currencyCode: localCurrency.code,
         description: description.trim() || undefined,
       });
     } finally {
@@ -3695,6 +3697,7 @@ export default function AddEntryScreen() {
             name: values.name,
             group: values.groupId,
             openingBalanceCents: openingCents,
+            currencyCode: values.currencyCode,
           });
           setIsCreateAccountOpen(false);
         }}

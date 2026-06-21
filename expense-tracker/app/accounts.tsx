@@ -3,15 +3,12 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
-  KeyboardAvoidingView,
   Modal,
   PanResponder,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import Svg, { Circle, Path } from "react-native-svg";
@@ -25,11 +22,17 @@ import {
   type StoredAccount,
   useAccountsStore,
 } from "@/stores/accounts";
+import { currencies, currencySymbols, type Currency } from "./index";
+import {
+  CreateAccountBottomSheet,
+  type CreateAccountValues,
+} from "./add-entry";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ACCOUNT_ITEM_HEIGHT = 52;
 const TRANSACTIONS_KEY = "europa:transactions";
+const HOME_CURRENCY_KEY = "europa:home-currency";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,14 +46,14 @@ type StoredTransaction = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatBalance(cents: number) {
+function formatBalance(cents: number, symbol = "$") {
   const sign = cents < 0 ? "-" : "";
   const abs = Math.abs(cents);
   const whole = Math.floor(abs / 100)
     .toString()
     .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   const decimal = (abs % 100).toString().padStart(2, "0");
-  return `${sign}$${whole}.${decimal}`;
+  return `${sign}${symbol}${whole}.${decimal}`;
 }
 
 function computeLiveBalance(account: StoredAccount, transactions: StoredTransaction[]): number {
@@ -140,307 +143,12 @@ function DragHandleIcon() {
   );
 }
 
-function CheckmarkIcon() {
-  return (
-    <Svg fill="none" height={20} viewBox="0 0 24 24" width={20}>
-      <Path
-        d="M5 13l4 4L19 7"
-        stroke={figmaColors.base.white}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2.5}
-      />
-    </Svg>
-  );
-}
-
-function ChevronRightIcon() {
-  return (
-    <Svg fill="none" height={18} viewBox="0 0 20 20" width={18}>
-      <Path
-        clipRule="evenodd"
-        d="M13.0892 9.41083C13.2454 9.56711 13.3332 9.77903 13.3332 10C13.3332 10.221 13.2454 10.4329 13.0892 10.5892L8.375 15.3033C8.11783 15.5605 7.71217 15.5605 7.455 15.3033C7.19783 15.0461 7.19783 14.6405 7.455 14.3833L11.8383 10L7.455 5.61667C7.19783 5.3595 7.19783 4.95383 7.455 4.69667C7.71217 4.4395 8.11783 4.4395 8.375 4.69667L13.0892 9.41083Z"
-        fill={figmaColors.grayNeutral["400"]}
-        fillRule="evenodd"
-      />
-    </Svg>
-  );
-}
-
-// ─── GroupPickerSheet ─────────────────────────────────────────────────────────
-
-function GroupPickerSheet({
-  onClose,
-  onSelect,
-  selected,
-  visible,
-}: {
-  onClose: () => void;
-  onSelect: (group: AccountGroup) => void;
-  selected: AccountGroup | null;
-  visible: boolean;
-}) {
-  const insets = useSafeAreaInsets();
-  const translateY = useRef(new Animated.Value(500)).current;
-  const backdropOpacity = useRef(new Animated.Value(0)).current;
-
-  const closeSheet = useCallback(() => {
-    Animated.parallel([
-      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
-      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
-    ]).start(({ finished }) => { if (finished) onClose(); });
-  }, [backdropOpacity, onClose, translateY]);
-
-  useEffect(() => {
-    if (visible) {
-      translateY.setValue(500);
-      Animated.parallel([
-        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
-        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
-      ]).start();
-    } else {
-      backdropOpacity.setValue(0);
-      translateY.setValue(500);
-    }
-  }, [backdropOpacity, translateY, visible]);
-
-  return (
-    <Modal animationType="none" onRequestClose={closeSheet} transparent visible={visible}>
-      <View style={styles.sheetRoot}>
-        <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]}>
-          <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
-        </Animated.View>
-        <View pointerEvents="box-none" style={styles.sheetContainer}>
-          <Animated.View
-            style={[
-              styles.innerSheet,
-              { paddingBottom: Math.max(insets.bottom, 16) },
-              { transform: [{ translateY }] },
-            ]}
-          >
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Account Group</Text>
-              <Pressable
-                accessibilityLabel="Close"
-                accessibilityRole="button"
-                onPress={closeSheet}
-                style={styles.headerButton}
-              >
-                <CloseIcon />
-              </Pressable>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.chipGrid}>
-              {accountGroupOrder.map((group) => (
-                <Pressable
-                  accessibilityLabel={`Select ${group}`}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: selected === group }}
-                  key={group}
-                  onPress={() => { onSelect(group); closeSheet(); }}
-                  style={[styles.chip, selected === group && styles.chipSelected]}
-                >
-                  <Text style={[styles.chipText, selected === group && styles.chipTextSelected]}>
-                    {group}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </Animated.View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-// ─── CreateAccountSheet ───────────────────────────────────────────────────────
-
-function CreateAccountSheet({
-  onClose,
-  onSubmit,
-  visible,
-}: {
-  onClose: () => void;
-  onSubmit: (account: StoredAccount) => void;
-  visible: boolean;
-}) {
-  const insets = useSafeAreaInsets();
-  const translateY = useRef(new Animated.Value(600)).current;
-  const backdropOpacity = useRef(new Animated.Value(0)).current;
-
-  const [selectedGroup, setSelectedGroup] = useState<AccountGroup | null>(null);
-  const [name, setName] = useState("");
-  const [balanceText, setBalanceText] = useState("");
-  const [isGroupPickerOpen, setIsGroupPickerOpen] = useState(false);
-
-  const canSubmit = selectedGroup !== null && name.trim().length > 0;
-
-  const closeSheet = useCallback(() => {
-    Animated.parallel([
-      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
-      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
-    ]).start(({ finished }) => { if (finished) onClose(); });
-  }, [backdropOpacity, onClose, translateY]);
-
-  useEffect(() => {
-    if (visible) {
-      setSelectedGroup(null);
-      setName("");
-      setBalanceText("");
-      translateY.setValue(600);
-      Animated.parallel([
-        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
-        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
-      ]).start();
-    } else {
-      backdropOpacity.setValue(0);
-      translateY.setValue(600);
-    }
-  }, [backdropOpacity, translateY, visible]);
-
-  const handleSubmit = useCallback(() => {
-    if (!canSubmit || !selectedGroup) return;
-    const parsedBalance = parseFloat(balanceText.replace(/,/g, "")) || 0;
-    const openingBalanceCents = Math.round(parsedBalance * 100);
-    onSubmit({
-      id: Date.now().toString(36),
-      name: name.trim(),
-      group: selectedGroup,
-      openingBalanceCents,
-    });
-    closeSheet();
-  }, [balanceText, canSubmit, closeSheet, name, onSubmit, selectedGroup]);
-
-  return (
-    <Modal animationType="none" onRequestClose={closeSheet} transparent visible={visible}>
-      <View style={styles.sheetRoot}>
-        <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]}>
-          <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
-        </Animated.View>
-
-        <View pointerEvents="box-none" style={styles.sheetContainer}>
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
-            <Animated.View
-              style={[
-                styles.createSheet,
-                { paddingBottom: Math.max(insets.bottom, 16) },
-                { transform: [{ translateY }] },
-              ]}
-            >
-              <View style={styles.sheetHeader}>
-                <Text style={styles.sheetTitle}>New Account</Text>
-                <Pressable
-                  accessibilityLabel="Close"
-                  accessibilityRole="button"
-                  onPress={closeSheet}
-                  style={styles.headerButton}
-                >
-                  <CloseIcon />
-                </Pressable>
-              </View>
-              <View style={styles.divider} />
-
-              <ScrollView bounces={false} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                {/* Group */}
-                <View style={styles.formRow}>
-                  <Text style={styles.formLabel}>Group</Text>
-                  <Pressable
-                    accessibilityLabel={selectedGroup ?? "Select group"}
-                    accessibilityRole="button"
-                    onPress={() => setIsGroupPickerOpen(true)}
-                    style={[styles.formControl, !!selectedGroup && styles.formControlFilled]}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.formControlText,
-                        !selectedGroup && styles.formPlaceholder,
-                        !!selectedGroup && styles.formControlTextFilled,
-                      ]}
-                    >
-                      {selectedGroup ?? "Select group"}
-                    </Text>
-                    <ChevronRightIcon />
-                  </Pressable>
-                </View>
-                <View style={styles.formDivider} />
-
-                {/* Name */}
-                <View style={styles.formRow}>
-                  <Text style={styles.formLabel}>Name</Text>
-                  <View style={[styles.formInputWrapper, !!name && styles.formInputWrapperFilled]}>
-                    <Text style={styles.formInputSizer} numberOfLines={1}>
-                      {name || "Account name"}
-                    </Text>
-                    <TextInput
-                      autoCapitalize="words"
-                      onChangeText={setName}
-                      placeholder="Account name"
-                      placeholderTextColor={figmaColors.grayNeutral["400"]}
-                      returnKeyType="next"
-                      style={[
-                        StyleSheet.absoluteFill,
-                        styles.formInputText,
-                        !!name && styles.formInputTextFilled,
-                      ]}
-                      value={name}
-                    />
-                  </View>
-                </View>
-                <View style={styles.formDivider} />
-
-                {/* Opening Balance */}
-                <View style={styles.formRow}>
-                  <Text style={styles.formLabel}>Balance</Text>
-                  <TextInput
-                    keyboardType="decimal-pad"
-                    onChangeText={setBalanceText}
-                    placeholder="0.00"
-                    placeholderTextColor={figmaColors.grayNeutral["400"]}
-                    returnKeyType="done"
-                    style={[
-                      styles.formControl,
-                      styles.formControlText,
-                      !!balanceText && styles.formControlFilled,
-                      !!balanceText && styles.formControlTextFilled,
-                    ]}
-                    value={balanceText}
-                  />
-                </View>
-              </ScrollView>
-
-              <Pressable
-                accessibilityLabel="Add account"
-                accessibilityRole="button"
-                accessibilityState={{ disabled: !canSubmit }}
-                disabled={!canSubmit}
-                onPress={handleSubmit}
-                style={[styles.submitButton, !canSubmit && styles.submitButtonDisabled]}
-              >
-                <Text style={[styles.submitButtonText, !canSubmit && styles.submitButtonTextDisabled]}>
-                  Add account
-                </Text>
-              </Pressable>
-            </Animated.View>
-          </KeyboardAvoidingView>
-        </View>
-      </View>
-
-      <GroupPickerSheet
-        onClose={() => setIsGroupPickerOpen(false)}
-        onSelect={setSelectedGroup}
-        selected={selectedGroup}
-        visible={isGroupPickerOpen}
-      />
-    </Modal>
-  );
-}
-
 // ─── AccountRow ───────────────────────────────────────────────────────────────
 
 function AccountRow({
   account,
   balance,
+  currencySymbol,
   isDragging,
   onDelete,
   onDragEnd,
@@ -450,6 +158,7 @@ function AccountRow({
 }: {
   account: StoredAccount;
   balance: number;
+  currencySymbol: string;
   isDragging: boolean;
   onDelete: () => void;
   onDragEnd: (dy: number) => void;
@@ -521,7 +230,7 @@ function AccountRow({
             ? { color: figmaColors.error["600"] }
             : undefined,
       ]}>
-        {formatBalance(balance)}
+        {formatBalance(balance, currencySymbol)}
       </Text>
       <View {...panResponder.panHandlers}>
         <DragHandleIcon />
@@ -545,11 +254,16 @@ export default function AccountsScreen() {
   } = useAccountsStore();
 
   const [allTransactions, setAllTransactions] = useState<StoredTransaction[]>([]);
+  const [homeCurrencyCode, setHomeCurrencyCode] = useState("USD");
 
   useFocusEffect(
     useCallback(() => {
-      AsyncStorage.getItem(TRANSACTIONS_KEY).then((data) => {
-        if (data) setAllTransactions(JSON.parse(data));
+      Promise.all([
+        AsyncStorage.getItem(TRANSACTIONS_KEY),
+        AsyncStorage.getItem(HOME_CURRENCY_KEY),
+      ]).then(([txData, homeCurrency]) => {
+        if (txData) setAllTransactions(JSON.parse(txData));
+        if (homeCurrency) setHomeCurrencyCode(homeCurrency);
       }).catch(() => {});
     }, []),
   );
@@ -769,6 +483,7 @@ export default function AccountsScreen() {
                 <AccountRow
                   account={account}
                   balance={account.balanceCents}
+                  currencySymbol={currencySymbols[account.currencyCode ?? "USD"] ?? account.currencyCode ?? "$"}
                   isDragging={dragGroup === groupData.group && dragIndex === index}
                   key={account.id}
                   onDelete={() => removeAccount(account.id)}
@@ -815,7 +530,7 @@ export default function AccountsScreen() {
                   ? { color: figmaColors.error["600"] }
                   : undefined,
             ]}>
-              {formatBalance(account.balanceCents)}
+              {formatBalance(account.balanceCents, currencySymbols[account.currencyCode ?? "USD"] ?? account.currencyCode ?? "$")}
             </Text>
             <DragHandleIcon />
           </Animated.View>
@@ -823,9 +538,20 @@ export default function AccountsScreen() {
       })()}
 
       {/* Create account sheet */}
-      <CreateAccountSheet
+      <CreateAccountBottomSheet
+        groups={accountGroupOrder}
         onClose={() => setIsCreateOpen(false)}
-        onSubmit={addAccount}
+        onSubmit={(values: CreateAccountValues) => {
+          addAccount({
+            id: Date.now().toString(36),
+            name: values.name,
+            group: values.groupId,
+            openingBalanceCents: Math.round(values.balance * 100),
+            currencyCode: values.currencyCode,
+          });
+          setIsCreateOpen(false);
+        }}
+        selectedCurrency={currencies.find((c) => c.code === homeCurrencyCode) ?? currencies[0]}
         visible={isCreateOpen}
       />
     </View>
@@ -863,13 +589,6 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   innerSheet: {
-    backgroundColor: figmaColors.base.white,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 24,
-  },
-  createSheet: {
     backgroundColor: figmaColors.base.white,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
@@ -965,121 +684,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: -0.1,
     lineHeight: 20,
-  },
-  chipGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    paddingBottom: 8,
-  },
-  chip: {
-    backgroundColor: figmaColors.grayNeutral["100"],
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  chipSelected: {
-    backgroundColor: figmaColors.grayNeutral["900"],
-  },
-  chipText: {
-    color: figmaColors.grayNeutral["700"],
-    fontFamily: fontFamily.medium,
-    fontSize: 15,
-    letterSpacing: -0.15,
-    lineHeight: 20,
-  },
-  chipTextSelected: {
-    color: figmaColors.base.white,
-  },
-  formRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 14,
-  },
-  formLabel: {
-    color: figmaColors.grayNeutral["700"],
-    fontFamily: fontFamily.medium,
-    fontSize: 16,
-    letterSpacing: -0.2,
-    lineHeight: 22,
-  },
-  formControl: {
-    backgroundColor: figmaColors.grayNeutral["100"],
-    borderRadius: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  formControlFilled: {
-    backgroundColor: figmaColors.blue["50"],
-  },
-  formControlText: {
-    color: figmaColors.grayNeutral["400"],
-    fontFamily: fontFamily.medium,
-    fontSize: 15,
-    letterSpacing: -0.15,
-    lineHeight: 20,
-  },
-  formControlTextFilled: {
-    color: figmaColors.blue["600"],
-  },
-  formPlaceholder: {
-    color: figmaColors.grayNeutral["400"],
-  },
-  formInputWrapper: {
-    backgroundColor: figmaColors.grayNeutral["100"],
-    borderRadius: 10,
-    overflow: "hidden",
-  },
-  formInputWrapperFilled: {
-    backgroundColor: figmaColors.blue["50"],
-  },
-  formInputSizer: {
-    color: "transparent",
-    fontFamily: fontFamily.medium,
-    fontSize: 15,
-    letterSpacing: -0.15,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  formInputText: {
-    color: figmaColors.grayNeutral["900"],
-    fontFamily: fontFamily.medium,
-    fontSize: 15,
-    letterSpacing: -0.15,
-    paddingHorizontal: 14,
-    paddingVertical: 0,
-  },
-  formInputTextFilled: {
-    color: figmaColors.blue["600"],
-  },
-  formDivider: {
-    borderBottomColor: figmaColors.grayNeutral["200"],
-    borderBottomWidth: 1,
-    borderStyle: "dashed",
-  },
-  submitButton: {
-    alignItems: "center",
-    backgroundColor: figmaColors.blue["500"],
-    borderRadius: 999,
-    height: 52,
-    justifyContent: "center",
-    marginTop: 12,
-  },
-  submitButtonDisabled: {
-    backgroundColor: figmaColors.grayNeutral["100"],
-  },
-  submitButtonText: {
-    color: figmaColors.base.white,
-    fontFamily: fontFamily.bold,
-    fontSize: 16,
-    letterSpacing: -0.2,
-    lineHeight: 22,
-  },
-  submitButtonTextDisabled: {
-    color: figmaColors.grayNeutral["400"],
   },
 });
