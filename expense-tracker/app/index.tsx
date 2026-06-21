@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { format, getDay, getDaysInMonth, startOfMonth } from "date-fns";
 import * as Haptics from "expo-haptics";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import {
   useCallback,
@@ -41,6 +41,10 @@ import { figmaColors } from "@/constants/colors";
 import { fontFamily } from "@/constants/typography";
 
 const HOME_CURRENCY_KEY = "europa:home-currency";
+const WEEK_START_KEY = "europa:week-start";
+
+const WEEK_DAY_LABELS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+const WEEK_DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TRANSACTIONS_KEY = "europa:transactions";
 const SPLASH_DURATION_MS = 2500;
 const SHEET_CLOSE_DISTANCE = 120;
@@ -280,7 +284,7 @@ const homeTabs: HomeTab[] = [
   { icon: "settings-1-line", label: "Settings" },
 ];
 
-const calendarDayLabels = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+// day labels are generated dynamically from weekStartIndex
 const monthPickerStartYear = 2016;
 const monthPickerEndYear = 2035;
 
@@ -310,20 +314,24 @@ function localDateFromKey(key: string): Date {
   return new Date(y, m - 1, d);
 }
 
-function getCalendarDays(year: number, month: number) {
+function getCalendarDays(year: number, month: number, weekStartIndex = 1) {
   const firstDayOfMonth = startOfMonth(new Date(year, month, 1));
-  const leadingEmptyDays = (getDay(firstDayOfMonth) + 6) % 7;
+  const leadingEmptyDays = (getDay(firstDayOfMonth) - weekStartIndex + 7) % 7;
   const daysInMonth = getDaysInMonth(firstDayOfMonth);
   const calendarDays: (number | null)[] = [
     ...Array.from({ length: leadingEmptyDays }, () => null),
     ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
   ];
 
-  while (calendarDays.length < 35) {
+  while (calendarDays.length % 7 !== 0) {
     calendarDays.push(null);
   }
 
-  return calendarDays.slice(0, 35);
+  return calendarDays;
+}
+
+function getCalendarDayLabels(weekStartIndex: number) {
+  return Array.from({ length: 7 }, (_, i) => WEEK_DAY_LABELS[(weekStartIndex + i) % 7]);
 }
 
 const mingCuteIcons: Record<
@@ -403,10 +411,12 @@ function formatSelectedCurrencyName(name: string) {
 
 let appSplashDone = false;
 let cachedHomeCurrency: Currency | null = null;
+let cachedWeekStartIndex = 1; // Monday default
 
 export default function AppEntryScreen() {
   const [isShowingSplash, setIsShowingSplash] = useState(!appSplashDone);
   const [homeCurrency, setHomeCurrency] = useState<Currency | null>(cachedHomeCurrency);
+  const [weekStartIndex, setWeekStartIndex] = useState(cachedWeekStartIndex);
 
   useEffect(() => {
     let isMounted = true;
@@ -417,22 +427,28 @@ export default function AppEntryScreen() {
       )
       .catch(() => null);
 
+    const weekStartLoad = AsyncStorage.getItem(WEEK_START_KEY)
+      .then((day) => (day ? WEEK_DAY_NAMES.indexOf(day) : -1))
+      .catch(() => -1);
+
     if (appSplashDone) {
-      currencyLoad.then((currency) => {
+      Promise.all([currencyLoad, weekStartLoad]).then(([currency, idx]) => {
         if (isMounted) {
           cachedHomeCurrency = currency;
           setHomeCurrency(currency);
+          if (idx >= 0) { cachedWeekStartIndex = idx; setWeekStartIndex(idx); }
         }
       });
     } else {
       const splashTimer = new Promise<void>((resolve) =>
         setTimeout(resolve, SPLASH_DURATION_MS),
       );
-      Promise.all([splashTimer, currencyLoad]).then(([, currency]) => {
+      Promise.all([splashTimer, currencyLoad, weekStartLoad]).then(([, currency, idx]) => {
         if (isMounted) {
           appSplashDone = true;
           cachedHomeCurrency = currency;
           setHomeCurrency(currency);
+          if (idx >= 0) { cachedWeekStartIndex = idx; setWeekStartIndex(idx); }
           setIsShowingSplash(false);
         }
       });
@@ -442,6 +458,32 @@ export default function AppEntryScreen() {
       isMounted = false;
     };
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!appSplashDone) return;
+      AsyncStorage.getItem(HOME_CURRENCY_KEY)
+        .then((code) => {
+          if (!code) return;
+          const found = currencies.find((c) => c.code === code);
+          if (found && found.code !== cachedHomeCurrency?.code) {
+            cachedHomeCurrency = found;
+            setHomeCurrency(found);
+          }
+        })
+        .catch(() => {});
+      AsyncStorage.getItem(WEEK_START_KEY)
+        .then((day) => {
+          if (!day) return;
+          const idx = WEEK_DAY_NAMES.indexOf(day);
+          if (idx >= 0 && idx !== cachedWeekStartIndex) {
+            cachedWeekStartIndex = idx;
+            setWeekStartIndex(idx);
+          }
+        })
+        .catch(() => {});
+    }, []),
+  );
 
   const handleCurrencySelected = useCallback((currency: Currency) => {
     cachedHomeCurrency = currency;
@@ -454,7 +496,7 @@ export default function AppEntryScreen() {
   }
 
   if (homeCurrency) {
-    return <HomeEmptyListScreen currency={homeCurrency} />;
+    return <HomeEmptyListScreen currency={homeCurrency} weekStartIndex={weekStartIndex} />;
   }
 
   return <CurrencySetupContent onComplete={handleCurrencySelected} />;
@@ -559,7 +601,7 @@ function CurrencySetupContent({
   );
 }
 
-function HomeEmptyListScreen({ currency }: { currency: Currency }) {
+function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency; weekStartIndex: number }) {
   const router = useRouter();
   const { deletedType, recorded } = useLocalSearchParams<{
     deletedType?: Transaction["type"];
@@ -828,6 +870,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
             exchangeRates={exchangeRates}
             monthTransactions={monthTransactions}
             selectedMonth={selectedMonth}
+            weekStartIndex={weekStartIndex}
           />
         </ScrollView>
       ) : monthTransactions.length === 0 ? (
@@ -1426,17 +1469,21 @@ function CalendarMonthGrid({
   exchangeRates,
   monthTransactions,
   selectedMonth,
+  weekStartIndex,
 }: {
   currencyCode: string;
   exchangeRates: Record<string, number>;
   monthTransactions: Transaction[];
   selectedMonth: Date;
+  weekStartIndex: number;
 }) {
   const calendarDays = getCalendarDays(
     selectedMonth.getFullYear(),
     selectedMonth.getMonth(),
+    weekStartIndex,
   );
-  const calendarRows = Array.from({ length: 5 }, (_, rowIndex) =>
+  const calendarDayLabels = getCalendarDayLabels(weekStartIndex);
+  const calendarRows = Array.from({ length: calendarDays.length / 7 }, (_, rowIndex) =>
     calendarDays.slice(rowIndex * 7, rowIndex * 7 + 7),
   );
 
@@ -1745,33 +1792,25 @@ function MonthYearPicker({
 
 export function CurrencyPicker({
   onClose,
-  onDismiss,
   onSelectCurrency,
   visible,
 }: {
   onClose: () => void;
-  onDismiss?: () => void;
   onSelectCurrency: (currency: Currency) => void;
   visible: boolean;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const translateY = useRef(new Animated.Value(500)).current;
+  const [mounted, setMounted] = useState(false);
+  const translateY = useRef(new Animated.Value(600)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
 
   const closeSheet = useCallback(() => {
     Animated.parallel([
-      Animated.timing(translateY, {
-        duration: 220,
-        toValue: 600,
-        useNativeDriver: true,
-      }),
-      Animated.timing(backdropOpacity, {
-        duration: 220,
-        toValue: 0,
-        useNativeDriver: true,
-      }),
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
     ]).start(({ finished }) => {
       if (finished) {
+        setMounted(false);
         onClose();
       }
     });
@@ -1808,7 +1847,6 @@ export function CurrencyPicker({
             closeSheet();
             return;
           }
-
           resetSheetPosition();
         },
         onPanResponderTerminate: resetSheetPosition,
@@ -1818,24 +1856,17 @@ export function CurrencyPicker({
 
   useEffect(() => {
     if (visible) {
+      setMounted(true);
       setSearchQuery("");
-      translateY.setValue(500);
+      translateY.setValue(600);
       Animated.parallel([
-        Animated.timing(backdropOpacity, {
-          duration: 300,
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-        Animated.spring(translateY, {
-          bounciness: 0,
-          speed: 18,
-          toValue: 0,
-          useNativeDriver: true,
-        }),
+        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
+        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
       ]).start();
     } else {
+      setMounted(false);
       backdropOpacity.setValue(0);
-      translateY.setValue(500);
+      translateY.setValue(600);
     }
   }, [backdropOpacity, translateY, visible]);
 
@@ -1848,100 +1879,96 @@ export function CurrencyPicker({
       )
     : currencies;
 
+  if (!mounted) return null;
+
   return (
-    <Modal
-      animationType="none"
-      onDismiss={onDismiss}
-      onRequestClose={closeSheet}
-      visible={visible}
-    >
-      <View style={styles.pickerRoot}>
-        <StatusBar style="light" />
-        <Animated.View style={[styles.pickerBackdrop, { opacity: backdropOpacity }]} />
-        <SafeAreaView edges={["top"]} style={styles.pickerSafeArea}>
-          <Animated.View
-            style={[
-              styles.pickerSheetFrame,
-              { transform: [{ translateY }] },
-            ]}
-          >
-            <View style={styles.sheetTopShadow} />
-            <View style={styles.pickerSheet}>
-              <View
-                accessibilityLabel="Drag down to close currency picker"
-                accessibilityRole="adjustable"
-                style={styles.dragHandleArea}
-                {...panResponder.panHandlers}
+    <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+      <Animated.View
+        pointerEvents="box-none"
+        style={[styles.pickerBackdrop, { opacity: backdropOpacity }]}
+      >
+        <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
+      </Animated.View>
+      <SafeAreaView edges={["top"]} style={styles.pickerSafeArea}>
+        <Animated.View
+          style={[styles.pickerSheetFrame, { transform: [{ translateY }] }]}
+        >
+          <View style={styles.sheetTopShadow} />
+          <View style={styles.pickerSheet}>
+            <View
+              accessibilityLabel="Drag down to close currency picker"
+              accessibilityRole="adjustable"
+              style={styles.dragHandleArea}
+              {...panResponder.panHandlers}
+            >
+              <View style={styles.grabber} />
+            </View>
+
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle}>Pick a currency</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close currency picker"
+                hitSlop={12}
+                onPress={closeSheet}
+                style={styles.closeButton}
               >
-                <View style={styles.grabber} />
-              </View>
+                <MingCuteIcon
+                  color={figmaColors.grayNeutral["950"]}
+                  name="close-line"
+                  size={24}
+                />
+              </Pressable>
+            </View>
 
-              <View style={styles.pickerHeader}>
-                <Text style={styles.pickerTitle}>Pick a currency</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Close currency picker"
-                  hitSlop={12}
-                  onPress={closeSheet}
-                  style={styles.closeButton}
-                >
-                  <MingCuteIcon
-                    color={figmaColors.grayNeutral["950"]}
-                    name="close-line"
-                    size={24}
-                  />
-                </Pressable>
-              </View>
-
-              <View style={styles.searchContainer}>
-                <View style={styles.searchIcon}>
-                  <MingCuteIcon
-                    color={figmaColors.grayNeutral["400"]}
-                    name="search-line"
-                    size={20}
-                  />
-                </View>
-                <TextInput
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  cursorColor={figmaColors.grayNeutral["900"]}
-                  placeholder="Search for a currency/country"
-                  placeholderTextColor={figmaColors.grayNeutral["400"]}
-                  onChangeText={setSearchQuery}
-                  selectionColor={figmaColors.grayNeutral["900"]}
-                  style={styles.searchInput}
-                  value={searchQuery}
+            <View style={styles.searchContainer}>
+              <View style={styles.searchIcon}>
+                <MingCuteIcon
+                  color={figmaColors.grayNeutral["400"]}
+                  name="search-line"
+                  size={20}
                 />
               </View>
-
-              <Text style={styles.sectionLabel}>All currencies</Text>
-
-              <ScrollView
-                contentContainerStyle={styles.currencyList}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                {filteredCurrencies.map((currency) => (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`${currency.code}, ${currency.name}`}
-                    key={currency.code}
-                    onPress={() => onSelectCurrency(currency)}
-                    style={styles.currencyRow}
-                  >
-                    <CurrencyFlag flag={currency.flag} />
-                    <View style={styles.currencyTextGroup}>
-                      <Text style={styles.currencyCode}>{currency.code}</Text>
-                      <Text style={styles.currencyName}>{currency.name}</Text>
-                    </View>
-                  </Pressable>
-                ))}
-              </ScrollView>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                cursorColor={figmaColors.grayNeutral["900"]}
+                placeholder="Search for a currency/country"
+                placeholderTextColor={figmaColors.grayNeutral["400"]}
+                onChangeText={setSearchQuery}
+                selectionColor={figmaColors.grayNeutral["900"]}
+                style={styles.searchInput}
+                value={searchQuery}
+              />
             </View>
-          </Animated.View>
-        </SafeAreaView>
-      </View>
-    </Modal>
+
+            <Text style={styles.sectionLabel}>All currencies</Text>
+
+            <ScrollView
+              contentContainerStyle={styles.currencyList}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {filteredCurrencies.map((currency) => (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${currency.code}, ${currency.name}`}
+                  key={currency.code}
+                  onPress={() => onSelectCurrency(currency)}
+                  style={styles.currencyRow}
+                >
+                  <CurrencyFlag flag={currency.flag} />
+                  <View style={styles.currencyTextGroup}>
+                    <Text style={styles.currencyCode}>{currency.code}</Text>
+                    <Text style={styles.currencyName}>{currency.name}</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </Animated.View>
+      </SafeAreaView>
+    </View>
   );
 }
 
@@ -2582,8 +2609,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     flexDirection: "row",
     gap: 6,
-    height: 40,
     paddingHorizontal: 8,
+    paddingVertical: 10,
   },
   searchIcon: {
     alignItems: "center",
@@ -2598,8 +2625,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     includeFontPadding: false,
     letterSpacing: -0.18,
+    lineHeight: 20,
     padding: 0,
-    textAlignVertical: "center",
   },
   sectionLabel: {
     color: figmaColors.grayNeutral["500"],

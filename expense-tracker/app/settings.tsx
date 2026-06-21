@@ -213,7 +213,11 @@ export default function SettingsScreen() {
             <Pressable
               android_ripple={{ color: figmaColors.grayNeutral["100"] }}
               key={item.label}
-              onPress={item.label === "Personalization" ? () => router.push("/personalization") : item.onPress}
+              onPress={
+                item.label === "Personalization" ? () => router.push("/personalization") :
+                item.label === "Currency & Preferences" ? () => router.push("/currency-preferences") :
+                item.onPress
+              }
               style={({ pressed }) => [
                 styles.menuRow,
                 pressed && styles.menuRowPressed,
