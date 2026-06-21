@@ -27,7 +27,9 @@ import {
 import Svg, { Circle, Path } from "react-native-svg";
 
 import { figmaColors } from "@/constants/colors";
+import { COLOR_PALETTE } from "@/constants/categories";
 import { fontFamily } from "@/constants/typography";
+import { useCategoriesStore } from "@/stores/categories";
 import {
   currencies,
   currencySymbols,
@@ -308,66 +310,6 @@ function CloseIcon() {
 type ExpenseCategory = {
   emoji: string;
   name: string;
-};
-
-const expenseCategories: ExpenseCategory[] = [
-  { emoji: "🍜", name: "Food" },
-  { emoji: "👫", name: "Social Life" },
-  { emoji: "🐾", name: "Pets" },
-  { emoji: "🚗", name: "Transport" },
-  { emoji: "🖼️", name: "Culture" },
-  { emoji: "🏠", name: "Rent" },
-  { emoji: "👕", name: "Apparel" },
-  { emoji: "💄", name: "Beauty" },
-  { emoji: "💊", name: "Health" },
-  { emoji: "📓", name: "Education" },
-  { emoji: "🎁", name: "Gift" },
-  { emoji: "⛽", name: "Fuel" },
-  { emoji: "🏦", name: "Loan" },
-  { emoji: "☎️", name: "Airtime" },
-  { emoji: "🔄", name: "Subscription" },
-  { emoji: "📦", name: "Other" },
-];
-
-const incomeCategories: ExpenseCategory[] = [
-  { emoji: "🤑", name: "Allowance" },
-  { emoji: "💼", name: "Salary" },
-  { emoji: "💻", name: "Freelance" },
-  { emoji: "💵", name: "Petty cash" },
-  { emoji: "🎁", name: "Gifts" },
-  { emoji: "💰", name: "Refunds" },
-  { emoji: "📈", name: "Investments" },
-  { emoji: "💸", name: "Bonus" },
-  { emoji: "🛍️", name: "Sales" },
-  { emoji: "📁", name: "Other" },
-];
-
-const categoryColors: Record<string, string> = {
-  Food: "#ef4444",
-  "Social Life": "#3b82f6",
-  Pets: "#f97316",
-  Transport: "#22c55e",
-  Culture: "#f59e0b",
-  Rent: "#a855f7",
-  Apparel: "#06b6d4",
-  Beauty: "#ec4899",
-  Health: "#14b8a6",
-  Education: "#8b5cf6",
-  Gift: "#f43f5e",
-  Fuel: "#78716c",
-  Loan: "#64748b",
-  Airtime: "#0ea5e9",
-  Subscription: "#10b981",
-  Allowance: "#ef4444",
-  Salary: "#3b82f6",
-  Freelance: "#f97316",
-  "Petty cash": "#22c55e",
-  Gifts: "#f59e0b",
-  Refunds: "#8b5cf6",
-  Investments: "#06b6d4",
-  Bonus: "#ec4899",
-  Sales: "#14b8a6",
-  Other: "#6b7280",
 };
 
 type AccountGroup =
@@ -651,12 +593,6 @@ function CameraIcon({ size = 28 }: { size?: number }) {
 
 const CATEGORY_ITEM_HEIGHT = 56;
 
-const COLOR_PALETTE = [
-  "#60A5FA", "#FB923C", "#FCA5A5", "#4ADE80", "#FDE047", "#C084FC",
-  "#EF4444", "#2DD4BF", "#F97316", "#3B82F6", "#F9A8D4", "#22D3EE",
-  "#16A34A", "#EAB308", "#10B981", "#9333EA", "#0891B2", "#B91C1C",
-  "#BE185D", "#0F766E", "#B45309", "#166534", "#991B1B", "#1D4ED8",
-];
 
 const PICKER_ITEM_HEIGHT = 44;
 const PICKER_VISIBLE_COUNT = 5;
@@ -2382,15 +2318,13 @@ function CustomIntervalSheet({
 }
 
 function CategoryPickerSheet({
-  categories = expenseCategories,
-  title = "Expense Categories",
+  type = "expense",
   onClose,
   onSelectCategory,
   selectedCategory,
   visible,
 }: {
-  categories?: ExpenseCategory[];
-  title?: string;
+  type?: "expense" | "income";
   onClose: () => void;
   onSelectCategory: (category: ExpenseCategory) => void;
   selectedCategory: ExpenseCategory | null;
@@ -2405,8 +2339,19 @@ function CategoryPickerSheet({
     category: ExpenseCategory;
     color: string;
   } | null>(null);
+  const {
+    expenseCategories: storeExpense,
+    incomeCategories: storeIncome,
+    categoryColors,
+    addCategory,
+    deleteCategory,
+    updateCategory,
+    reorderCategories,
+  } = useCategoriesStore();
+  const storeCategories = type === "expense" ? storeExpense : storeIncome;
+  const title = type === "expense" ? "Expense Categories" : "Income Categories";
   const [localCategories, setLocalCategories] = useState<ExpenseCategory[]>(
-    () => [...categories],
+    () => [...storeCategories],
   );
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [snapTarget, setSnapTarget] = useState<number | null>(null);
@@ -2416,8 +2361,9 @@ function CategoryPickerSheet({
   localLengthRef.current = localCategories.length;
 
   useEffect(() => {
-    setLocalCategories([...categories]);
-  }, [categories]);
+    setLocalCategories([...storeCategories]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeExpense, storeIncome]);
 
   const closeSheet = useCallback(() => {
     Animated.parallel([
@@ -2460,38 +2406,39 @@ function CategoryPickerSheet({
   }, [backdropOpacity, translateY, visible]);
 
   const handleDelete = useCallback((name: string) => {
+    deleteCategory(type, name);
     setLocalCategories((prev) => prev.filter((c) => c.name !== name));
-  }, []);
+  }, [deleteCategory, type]);
 
   const handleAddCategory = useCallback(
     (category: ExpenseCategory, color: string) => {
-      categoryColors[category.name] = color;
+      addCategory(type, category, color);
       setLocalCategories((prev) => [...prev, category]);
     },
-    [],
+    [addCategory, type],
   );
 
   const handleUpdateCategory = useCallback(
     (newCategory: ExpenseCategory, color: string) => {
       const oldName = editingCategory?.category.name;
       if (!oldName) return;
-      if (newCategory.name !== oldName) delete categoryColors[oldName];
-      categoryColors[newCategory.name] = color;
+      updateCategory(type, oldName, newCategory, color);
       setLocalCategories((prev) =>
         prev.map((c) => (c.name === oldName ? newCategory : c)),
       );
       setEditingCategory(null);
     },
-    [editingCategory],
+    [editingCategory, type, updateCategory],
   );
 
   const handleDeleteEditingCategory = useCallback(() => {
     if (!editingCategory) return;
+    deleteCategory(type, editingCategory.category.name);
     setLocalCategories((prev) =>
       prev.filter((c) => c.name !== editingCategory.category.name),
     );
     setEditingCategory(null);
-  }, [editingCategory]);
+  }, [deleteCategory, editingCategory, type]);
 
   const handleDragStart = useCallback((index: number) => {
     dragIndexRef.current = index;
@@ -2528,12 +2475,13 @@ function CategoryPickerSheet({
         Math.min(prev.length - 1, from + Math.round(dy / CATEGORY_ITEM_HEIGHT)),
       );
       if (to === from) return prev;
+      reorderCategories(type, from, to);
       const next = [...prev];
       const [item] = next.splice(from, 1);
       next.splice(to, 0, item);
       return next;
     });
-  }, []);
+  }, [reorderCategories, type]);
 
   return (
     <Modal
@@ -3247,6 +3195,7 @@ export default function AddEntryScreen() {
     transactionId?: string;
   }>();
   const insets = useSafeAreaInsets();
+  const { categoryColors } = useCategoriesStore();
   const transactionId =
     typeof routeTransactionId === "string" ? routeTransactionId : undefined;
   const isEditing = transactionId !== undefined;
@@ -3722,15 +3671,10 @@ export default function AddEntryScreen() {
       />
 
       <CategoryPickerSheet
-        categories={
-          transactionType === "income" ? incomeCategories : expenseCategories
-        }
+        type={transactionType === "income" ? "income" : "expense"}
         onClose={() => setIsCategoryPickerOpen(false)}
         onSelectCategory={setSelectedCategory}
         selectedCategory={selectedCategory}
-        title={
-          transactionType === "income" ? "Income Categories" : "Expense Categories"
-        }
         visible={isCategoryPickerOpen}
       />
 

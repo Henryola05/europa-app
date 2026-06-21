@@ -36,6 +36,8 @@ export default function RootLayout() {
         <Stack.Screen name="currency-preferences" options={{ animation: "none", presentation: "transparentModal" }} />
         <Stack.Screen name="categories-alerts" options={{ animation: "none", presentation: "transparentModal" }} />
         <Stack.Screen name="categories-accounts" options={{ animation: "none", presentation: "transparentModal" }} />
+        <Stack.Screen name="expense-categories" options={{ animation: "none", presentation: "transparentModal" }} />
+        <Stack.Screen name="income-categories" options={{ animation: "none", presentation: "transparentModal" }} />
       </Stack>
     </GestureHandlerRootView>
   );
