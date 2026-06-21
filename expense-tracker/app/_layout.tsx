@@ -32,6 +32,7 @@ export default function RootLayout() {
     <GestureHandlerRootView onLayout={handleRootLayout} style={{ flex: 1 }}>
       <Stack screenOptions={{ headerShown: false, animation: "none" }}>
         <Stack.Screen name="add-entry" options={{ animation: "slide_from_bottom" }} />
+        <Stack.Screen name="personalization" options={{ animation: "slide_from_right" }} />
       </Stack>
     </GestureHandlerRootView>
   );
