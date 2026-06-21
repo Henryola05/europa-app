@@ -297,6 +297,19 @@ function formatMonthYearLabel(date: Date) {
   return format(date, "MMM yyyy");
 }
 
+function localDateKey(isoString: string): string {
+  const d = new Date(isoString);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function localDateFromKey(key: string): Date {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
 function getCalendarDays(year: number, month: number) {
   const firstDayOfMonth = startOfMonth(new Date(year, month, 1));
   const leadingEmptyDays = (getDay(firstDayOfMonth) + 6) % 7;
@@ -690,14 +703,14 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   const dayGroups = useMemo<DayGroup[]>(() => {
     const map = new Map<string, Transaction[]>();
     for (const tx of monthTransactions) {
-      const key = tx.date.slice(0, 10);
+      const key = localDateKey(tx.date);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(tx);
     }
     return Array.from(map.entries())
       .map(([dateKey, txs]) => ({
         dateKey,
-        date: new Date(dateKey),
+        date: localDateFromKey(dateKey),
         transactions: txs,
         netCents: txs.reduce((s, tx) => {
           const cents = convertCents(tx.amountCents, tx.currencyCode, currency.code, exchangeRates);
@@ -960,14 +973,14 @@ function SearchOverlay({
       : [];
     const map = new Map<string, Transaction[]>();
     for (const tx of matched) {
-      const key = tx.date.slice(0, 10);
+      const key = localDateKey(tx.date);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(tx);
     }
     return Array.from(map.entries())
       .map(([dateKey, txs]) => ({
         dateKey,
-        date: new Date(dateKey),
+        date: localDateFromKey(dateKey),
         transactions: txs,
         netCents: txs.reduce((s, tx) => {
           const cents = convertCents(tx.amountCents, tx.currencyCode, currencyCode, exchangeRates);
