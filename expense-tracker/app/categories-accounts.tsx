@@ -90,6 +90,7 @@ export default function CategoriesAccountsScreen() {
               onPress={
                 label === "Expense Categories" ? () => router.push("/expense-categories") :
                 label === "Income Categories" ? () => router.push("/income-categories") :
+                label === "Accounts" ? () => router.push("/accounts") :
                 undefined
               }
               style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}

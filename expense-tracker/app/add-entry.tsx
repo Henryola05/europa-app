@@ -30,6 +30,7 @@ import { figmaColors } from "@/constants/colors";
 import { COLOR_PALETTE } from "@/constants/categories";
 import { fontFamily } from "@/constants/typography";
 import { useCategoriesStore } from "@/stores/categories";
+import { accountGroupOrder, useAccountsStore, type AccountGroup as StoreAccountGroup } from "@/stores/accounts";
 import {
   currencies,
   currencySymbols,
@@ -312,19 +313,7 @@ type ExpenseCategory = {
   name: string;
 };
 
-type AccountGroup =
-  | "Cash"
-  | "Accounts"
-  | "Credit Card"
-  | "Debit Card"
-  | "Savings"
-  | "Investments"
-  | "Top-Up/Prepaid"
-  | "Overdrafts"
-  | "Loan"
-  | "Insurance"
-  | "Mobile Money"
-  | "Others";
+type AccountGroup = StoreAccountGroup;
 
 type Account = {
   id: string;
@@ -369,33 +358,9 @@ type SelectedImage = {
   source: "recent" | "gallery" | "camera";
 };
 
-const accountGroupOrder: AccountGroup[] = [
-  "Cash",
-  "Accounts",
-  "Credit Card",
-  "Debit Card",
-  "Savings",
-  "Investments",
-  "Top-Up/Prepaid",
-  "Overdrafts",
-  "Loan",
-  "Insurance",
-  "Mobile Money",
-  "Others",
-];
-
 const ACCOUNT_ITEM_HEIGHT = 52;
 const HOME_CURRENCY_KEY = "europa:home-currency";
 const TRANSACTIONS_KEY = "europa:transactions";
-const ACCOUNTS_KEY = "europa:accounts";
-
-const defaultAccounts: Account[] = [
-  { id: "cash-wallet", name: "Cash Wallet", group: "Cash", balanceCents: 0, openingBalanceCents: 0 },
-  { id: "chase", name: "Chase", group: "Accounts", balanceCents: 0, openingBalanceCents: 0 },
-  { id: "wells-fargo", name: "Wells Fargo", group: "Accounts", balanceCents: 0, openingBalanceCents: 0 },
-  { id: "venmo", name: "Venmo", group: "Mobile Money", balanceCents: 0, openingBalanceCents: 0 },
-  { id: "cash-app", name: "Cash App", group: "Mobile Money", balanceCents: 0, openingBalanceCents: 0 },
-];
 
 function applyTransactionsToAccounts(accounts: Account[], transactions: StoredTransaction[]): Account[] {
   return accounts.map((account) => {
@@ -427,17 +392,6 @@ function groupAccounts(accounts: Account[]): AccountGroupData[] {
     .filter((g) => g.accounts.length > 0);
 }
 
-function reorderAccountsInGroup(
-  accounts: Account[],
-  group: AccountGroup,
-  orderedIds: string[],
-): Account[] {
-  const ordered = orderedIds
-    .map((id) => accounts.find((a) => a.id === id))
-    .filter((a): a is Account => a !== undefined);
-  let idx = 0;
-  return accounts.map((a) => (a.group === group ? ordered[idx++] ?? a : a));
-}
 
 type CreateAccountValues = {
   groupId: AccountGroup;
@@ -3218,12 +3172,19 @@ export default function AddEntryScreen() {
   const [selectedCategory, setSelectedCategory] =
     useState<ExpenseCategory | null>(null);
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
-  const [localAccounts, setLocalAccounts] = useState<Account[]>(() => [...defaultAccounts]);
+  const {
+    accounts: storeAccounts,
+    addAccount: storeAddAccount,
+    removeAccount: storeRemoveAccount,
+    reorderInGroup,
+    moveToGroup,
+    setOpeningBalance,
+  } = useAccountsStore();
+  const localAccounts: Account[] = storeAccounts.map((a) => ({ ...a, balanceCents: a.openingBalanceCents }));
   const [allTransactions, setAllTransactions] = useState<StoredTransaction[]>([]);
   const [editBalanceAccountId, setEditBalanceAccountId] = useState<string | null>(null);
   const [editBalanceCents, setEditBalanceCents] = useState(0);
   const [isEditBalanceOpen, setIsEditBalanceOpen] = useState(false);
-  const accountsReadyRef = useRef(false);
 
   useEffect(() => {
     editInitializedRef.current = false;
@@ -3232,23 +3193,13 @@ export default function AddEntryScreen() {
   useFocusEffect(
     useCallback(() => {
       Promise.all([
-        AsyncStorage.getItem(ACCOUNTS_KEY),
         AsyncStorage.getItem(TRANSACTIONS_KEY),
         AsyncStorage.getItem(HOME_CURRENCY_KEY),
-      ]).then(([accountData, txData, homeCurrencyCode]) => {
-        accountsReadyRef.current = true;
-        const storedAccounts = accountData
-          ? (JSON.parse(accountData) as Account[]).map((account) => ({
-              ...account,
-              balanceCents: 0,
-              openingBalanceCents: 0,
-            }))
-          : defaultAccounts;
+      ]).then(([txData, homeCurrencyCode]) => {
         const storedTransactions = txData
           ? (JSON.parse(txData) as RecordedTransaction[])
           : [];
 
-        setLocalAccounts(storedAccounts);
         setAllTransactions(storedTransactions);
 
         if (homeCurrencyCode && !transactionId) {
@@ -3284,11 +3235,11 @@ export default function AddEntryScreen() {
               },
         );
         setSelectedAccount(
-          storedAccounts.find((account) => account.name === transaction.accountName) ??
+          localAccounts.find((account) => account.name === transaction.accountName) ??
             null,
         );
         setTransferDestinationAccount(
-          storedAccounts.find(
+          localAccounts.find(
             (account) => account.name === transaction.destinationAccountName,
           ) ?? null,
         );
@@ -3304,11 +3255,6 @@ export default function AddEntryScreen() {
       }).catch(() => {});
     }, [transactionId]),
   );
-
-  useEffect(() => {
-    if (!accountsReadyRef.current) return;
-    AsyncStorage.setItem(ACCOUNTS_KEY, JSON.stringify(localAccounts)).catch(() => {});
-  }, [localAccounts]);
 
   const displayAccounts = useMemo(
     () => applyTransactionsToAccounts(localAccounts, allTransactions),
@@ -3338,13 +3284,7 @@ export default function AddEntryScreen() {
       if (tx.type === "expense") return sum - tx.amountCents;
       return sum;
     }, 0);
-    setLocalAccounts((prev) =>
-      prev.map((a) =>
-        a.id === editBalanceAccountId
-          ? { ...a, openingBalanceCents: newBalanceCents - net, balanceCents: newBalanceCents - net }
-          : a,
-      ),
-    );
+    setOpeningBalance(editBalanceAccountId, newBalanceCents - net);
     setIsEditBalanceOpen(false);
     setEditBalanceAccountId(null);
   }
@@ -3721,34 +3661,13 @@ export default function AddEntryScreen() {
         groups={groupAccounts(displayAccounts)}
         onClose={() => setIsAccountsEditOpen(false)}
         onEditBalance={handleOpenEditBalance}
-        onMoveAccountToGroup={(accountId, toGroup, atIndex) => {
-          setLocalAccounts((prev) => {
-            const account = prev.find((a) => a.id === accountId);
-            if (!account) return prev;
-            const updated = { ...account, group: toGroup };
-            const withoutAccount = prev.filter((a) => a.id !== accountId);
-            const targetGroupItems = withoutAccount.filter((a) => a.group === toGroup);
-            if (atIndex >= targetGroupItems.length) {
-              const lastIdx = withoutAccount.reduce((li, a, i) => (a.group === toGroup ? i : li), -1);
-              const result = [...withoutAccount];
-              result.splice(lastIdx + 1, 0, updated);
-              return result;
-            }
-            const insertBeforeId = targetGroupItems[atIndex].id;
-            const insertIdx = withoutAccount.findIndex((a) => a.id === insertBeforeId);
-            const result = [...withoutAccount];
-            result.splice(insertIdx, 0, updated);
-            return result;
-          });
-        }}
+        onMoveAccountToGroup={(accountId, toGroup, atIndex) => moveToGroup(accountId, toGroup, atIndex)}
         onNewAccount={() => {
           setIsAccountsEditOpen(false);
           setIsCreateAccountOpen(true);
         }}
-        onRemoveAccount={(id) => setLocalAccounts((prev) => prev.filter((a) => a.id !== id))}
-        onReorderAccounts={(group, ids) =>
-          setLocalAccounts((prev) => reorderAccountsInGroup(prev, group, ids))
-        }
+        onRemoveAccount={(id) => storeRemoveAccount(id)}
+        onReorderAccounts={(group, ids) => reorderInGroup(group, ids)}
         onSelectAccount={(account) => {
           setSelectedAccount(account);
           setIsAccountsEditOpen(false);
@@ -3771,14 +3690,12 @@ export default function AddEntryScreen() {
         onClose={() => setIsCreateAccountOpen(false)}
         onSubmit={(values) => {
           const openingCents = Math.round(values.balance * 100);
-          const account: Account = {
+          storeAddAccount({
             id: Date.now().toString(36),
             name: values.name,
             group: values.groupId,
-            balanceCents: openingCents,
             openingBalanceCents: openingCents,
-          };
-          setLocalAccounts((prev) => [...prev, account]);
+          });
           setIsCreateAccountOpen(false);
         }}
         selectedCurrency={selectedCurrency}

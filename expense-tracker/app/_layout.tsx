@@ -38,6 +38,7 @@ export default function RootLayout() {
         <Stack.Screen name="categories-accounts" options={{ animation: "none", presentation: "transparentModal" }} />
         <Stack.Screen name="expense-categories" options={{ animation: "none", presentation: "transparentModal" }} />
         <Stack.Screen name="income-categories" options={{ animation: "none", presentation: "transparentModal" }} />
+        <Stack.Screen name="accounts" options={{ animation: "none", presentation: "transparentModal" }} />
       </Stack>
     </GestureHandlerRootView>
   );
