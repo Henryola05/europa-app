@@ -3551,7 +3551,7 @@ export default function AddEntryScreen() {
                 placeholder={
                   transactionType === "income"
                     ? "e.g logo design"
-                    : "e.g jollof and chicken"
+                    : "e.g Nike"
                 }
                 value={description}
               />
@@ -3564,7 +3564,7 @@ export default function AddEntryScreen() {
                   ? `${selectedCategory.emoji} ${selectedCategory.name}`
                   : transactionType === "income"
                     ? "e.g 💻 freelance"
-                    : "e.g 🍜 food"}
+                    : "e.g 🧥 apparel"}
               </SentencePill>
               <Text style={styles.sentenceWord}>
                 {transactionType === "income" ? "into" : "from"}
