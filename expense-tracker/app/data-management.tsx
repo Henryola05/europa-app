@@ -87,9 +87,20 @@ export default function DataManagementScreen() {
   }, [eraseBackdropOpacity, eraseTranslateY]);
 
   const confirmErase = useCallback(async () => {
-    await AsyncStorage.multiRemove(["europa:transactions", "europa:accounts"]);
+    await AsyncStorage.multiRemove([
+      "europa:transactions",
+      "europa:accounts",
+      "europa:categories",
+      "europa:home-currency",
+      "europa:week-start",
+      "europa:budget-reset-day",
+      "europa:haptic-enabled",
+      "europa:notifications-enabled",
+      "europa:daily-reminder-enabled",
+      "europa:reminder-time",
+    ]);
     useAccountsStore.setState({ accounts: [] });
-    useUIStore.getState().setPendingToast("All data has been erased");
+    useUIStore.getState().setShouldResetOnboarding(true);
     router.replace("/");
   }, [router]);
 

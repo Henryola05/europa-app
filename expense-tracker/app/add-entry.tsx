@@ -24,7 +24,7 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import Svg, { Circle, Path } from "react-native-svg";
+import Svg, { Circle, ClipPath, Defs, G, Path, Rect } from "react-native-svg";
 
 import { figmaColors } from "@/constants/colors";
 import { COLOR_PALETTE } from "@/constants/categories";
@@ -1636,6 +1636,28 @@ function AccountsBottomSheet({
   );
 }
 
+function AccountsEmptyIcon() {
+  return (
+    <Svg fill="none" height={80} viewBox="0 0 79 80" width={79}>
+      <Defs>
+        <ClipPath id="acct-empty-clip">
+          <Rect fill="white" height={80} width={79} />
+        </ClipPath>
+      </Defs>
+      <G clipPath="url(#acct-empty-clip)">
+        <Path d="M71.0805 14.6487H9.45502C8.62362 14.6492 7.82642 14.9839 7.23853 15.5792C6.65064 16.1745 6.32014 16.9818 6.31963 17.8238V75.0815C6.32014 75.9234 6.65064 76.7307 7.23853 77.326C7.82642 77.9213 8.62362 78.256 9.45502 78.2565H71.0805C71.912 78.2561 72.7093 77.9215 73.2972 77.3261C73.8852 76.7308 74.2157 75.9234 74.2162 75.0815V17.8238C74.2157 16.9818 73.8852 16.1744 73.2972 15.5791C72.7093 14.9838 71.912 14.6491 71.0805 14.6487Z" fill="#D2D6DB" />
+        <Path d="M67.0237 58.3598H13.5126C11.781 58.3598 10.3772 56.9382 10.3772 55.1848V4.59459C10.3772 2.84115 11.781 1.41951 13.5126 1.41951H67.0237C68.7553 1.41951 70.1591 2.84115 70.1591 4.59459V55.1848C70.1591 56.9382 68.7553 58.3598 67.0237 58.3598Z" fill="#E5E7EB" />
+        <Path d="M11.3698 56.1897V5.59983C11.3698 3.84639 12.7737 2.42475 14.5052 2.42475H68.0164C68.628 2.42475 69.1966 2.60475 69.6787 2.91131C69.1244 2.01623 68.144 1.41951 67.0237 1.41951H13.5126C11.781 1.41951 10.3772 2.84115 10.3772 4.59459V55.1847C10.3772 56.3195 10.9664 57.312 11.8503 57.8736C11.5476 57.3851 11.3698 56.8093 11.3698 56.19V56.1897Z" fill="white" />
+        <Path d="M60.4397 12.1084H20.0969V14.4366H60.4397V12.1084ZM60.4397 20.9983H20.0969V23.3265H60.4397V20.9983ZM60.4397 29.8901H20.0969V32.2183H60.4397V29.8901ZM60.4397 38.7799H20.0969V41.1084H60.4397V38.7799Z" fill="white" />
+        <Path d="M24.9045 31.2652L35.042 41.5314H24.9045V31.2652Z" fill="#D2D6DB" />
+        <Path d="M74.2164 42.3782V18.7575L70.1593 14.6487V42.3779H74.2164V42.3782Z" fill="#D2D6DB" />
+        <Path d="M78.9686 44.5148L74.5974 75.8498C74.3788 77.4164 73.0549 78.5807 71.4927 78.5807H9.04323C7.48104 78.5807 6.15714 77.4164 5.9386 75.8498L0.0314057 33.5085C-0.235057 31.597 1.22968 29.8892 3.13604 29.8892H22.4218C23.9839 29.8892 25.3078 31.0534 25.5264 32.6197L26.3005 38.1646C26.5191 39.7311 27.843 40.8954 29.4052 40.8954H75.8646C77.7703 40.8954 79.2354 42.6033 78.9689 44.5148H78.9686Z" fill="#D2D6DB" />
+        <Path d="M63.4808 64.6039H17.0557C16.8012 64.6038 16.5555 64.5098 16.3646 64.3394C16.1737 64.169 16.0507 63.934 16.0187 63.6784L15.4378 59.0213C15.4194 58.8723 15.4324 58.7211 15.4761 58.5776C15.5197 58.4341 15.593 58.3017 15.6911 58.1891C15.7892 58.0764 15.9098 57.9862 16.0449 57.9244C16.18 57.8626 16.3266 57.8306 16.4749 57.8305H64.0617C64.2099 57.8306 64.3565 57.8626 64.4916 57.9244C64.6267 57.9862 64.7473 58.0764 64.8454 58.1891C64.9435 58.3017 65.0168 58.4341 65.0604 58.5776C65.1041 58.7211 65.1172 58.8723 65.0987 59.0213L64.5179 63.6784C64.4858 63.934 64.3628 64.169 64.1719 64.3394C63.981 64.5098 63.7353 64.6038 63.4808 64.6039Z" fill="#F9FAFB" />
+      </G>
+    </Svg>
+  );
+}
+
 function AccountPickerSheet({
   accounts,
   onClose,
@@ -1718,33 +1740,50 @@ function AccountPickerSheet({
 
             <View style={styles.categoryDivider} />
 
-            <ScrollView contentContainerStyle={styles.categoryGrid} showsVerticalScrollIndicator={false}>
-              {accounts.map((account) => {
-                const isSelected = selectedAccount?.id === account.id;
-                return (
-                  <Pressable
-                    accessibilityLabel={`Select ${account.name}`}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: isSelected }}
-                    key={account.id}
-                    onPress={() => { onSelectAccount(account); closeSheet(); }}
-                    style={[styles.categoryChip, isSelected && styles.categoryChipSelected]}
-                  >
-                    <Text style={[styles.categoryChipText, isSelected && styles.categoryChipTextSelected]}>
-                      {account.name}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-              <Pressable
-                accessibilityLabel="New account"
-                accessibilityRole="button"
-                onPress={onNewAccount}
-                style={styles.categoryChip}
-              >
-                <Text style={styles.categoryChipText}>+ New account</Text>
-              </Pressable>
-            </ScrollView>
+            {accounts.length === 0 ? (
+              <View style={styles.accountsEmptyState}>
+                <AccountsEmptyIcon />
+                <Text style={styles.accountsEmptyTitle}>No accounts yet</Text>
+                <Text style={styles.accountsEmptySubtitle}>
+                  {"Add an account to start\ntracking your money."}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={onNewAccount}
+                  style={({ pressed }) => [styles.accountsEmptyButton, pressed && { opacity: 0.85 }]}
+                >
+                  <Text style={styles.accountsEmptyButtonText}>+ Add account</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <ScrollView contentContainerStyle={styles.categoryGrid} showsVerticalScrollIndicator={false}>
+                {accounts.map((account) => {
+                  const isSelected = selectedAccount?.id === account.id;
+                  return (
+                    <Pressable
+                      accessibilityLabel={`Select ${account.name}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isSelected }}
+                      key={account.id}
+                      onPress={() => { onSelectAccount(account); closeSheet(); }}
+                      style={[styles.categoryChip, isSelected && styles.categoryChipSelected]}
+                    >
+                      <Text style={[styles.categoryChipText, isSelected && styles.categoryChipTextSelected]}>
+                        {account.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+                <Pressable
+                  accessibilityLabel="New account"
+                  accessibilityRole="button"
+                  onPress={onNewAccount}
+                  style={styles.categoryChip}
+                >
+                  <Text style={styles.categoryChipText}>+ New account</Text>
+                </Pressable>
+              </ScrollView>
+            )}
           </Animated.View>
         </View>
       </View>
@@ -4391,6 +4430,45 @@ const styles = StyleSheet.create({
   },
   categoryChipTextSelected: {
     color: figmaColors.base.white,
+  },
+  accountsEmptyState: {
+    alignItems: "center",
+    gap: 8,
+    paddingBottom: 32,
+    paddingHorizontal: 24,
+    paddingTop: 40,
+  },
+  accountsEmptyTitle: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 20,
+    letterSpacing: -0.3,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  accountsEmptySubtitle: {
+    color: figmaColors.grayNeutral["500"],
+    fontFamily: fontFamily.regular,
+    fontSize: 15,
+    letterSpacing: -0.15,
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  accountsEmptyButton: {
+    alignItems: "center",
+    backgroundColor: figmaColors.grayNeutral["900"],
+    borderRadius: 999,
+    height: 52,
+    justifyContent: "center",
+    marginTop: 16,
+    paddingHorizontal: 32,
+    width: "100%",
+  },
+  accountsEmptyButtonText: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.semiBold,
+    fontSize: 16,
+    letterSpacing: -0.2,
   },
   categoryList: {
     paddingBottom: 8,

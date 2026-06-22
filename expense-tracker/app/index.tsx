@@ -463,6 +463,20 @@ export default function AppEntryScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!appSplashDone) return;
+
+      if (useUIStore.getState().shouldResetOnboarding) {
+        useUIStore.getState().setShouldResetOnboarding(false);
+        cachedHomeCurrency = null;
+        appSplashDone = false;
+        setIsShowingSplash(true);
+        const t = setTimeout(() => {
+          appSplashDone = true;
+          setIsShowingSplash(false);
+          setHomeCurrency(null);
+        }, SPLASH_DURATION_MS);
+        return () => clearTimeout(t);
+      }
+
       AsyncStorage.getItem(HOME_CURRENCY_KEY)
         .then((code) => {
           if (!code) return;
@@ -503,15 +517,27 @@ export default function AppEntryScreen() {
   return <CurrencySetupContent onComplete={handleCurrencySelected} />;
 }
 
+function EuropaGlobeIcon() {
+  return (
+    <Svg fill="none" height={40} viewBox="0 0 40 40" width={40}>
+      <Path d="M28.6544 35.168C28.0505 36.5084 27.2998 37.8211 26.3997 38.9568C33.867 36.4431 39.364 29.6514 39.9691 21.5H37.311C34.0671 21.5 31.4614 24.0861 30.9341 27.2829C30.448 30.2297 29.6704 32.913 28.6544 35.168Z" fill="#fff" />
+      <Path d="M22.7749 21.5C26.1713 21.5 28.9495 24.3299 28.3257 27.6643C26.9708 34.9067 23.7534 40 20 40C15.2507 40 11.3595 31.8451 11.0139 21.5H22.7749Z" fill="#fff" />
+      <Path d="M31.0031 13.1502C31.4998 16.3769 34.1176 19 37.3862 19H40C39.5872 10.6271 34.0192 3.60817 26.3997 1.04317C27.2998 2.17892 28.0505 3.4916 28.6544 4.83195C29.72 7.19699 30.5233 10.0331 31.0031 13.1502Z" fill="#fff" />
+      <Path d="M28.426 12.8957C28.9942 16.2133 26.2279 19 22.858 19H11C11.2348 8.41889 15.1744 0 20 0C23.8494 0 27.135 5.35721 28.426 12.8957Z" fill="#fff" />
+      <Path d="M8.49635 19C8.61009 13.5917 9.64313 8.61059 11.3456 4.83195C11.9495 3.4916 12.7002 2.17892 13.6003 1.04317C5.98085 3.60817 0.4128 10.6271 0 19H8.49635Z" fill="#fff" />
+      <Path d="M0.0308759 21.5C0.636018 29.6514 6.13302 36.4431 13.6003 38.9568C12.7002 37.8211 11.9495 36.5084 11.3456 35.168C9.69572 31.5061 8.67455 26.7149 8.50952 21.5H0.0308759Z" fill="#fff" />
+    </Svg>
+  );
+}
+
 function FirstLaunchSplashScreen() {
   return (
     <View style={styles.introSplash}>
       <StatusBar style="light" />
-      <Image
-        resizeMode="contain"
-        source={require("../assets/images/splash-screen-logo.png")}
-        style={styles.introLogo}
-      />
+      <View style={styles.introLogoRow}>
+        <EuropaGlobeIcon />
+        <Text style={styles.introLogoText}>Europa</Text>
+      </View>
     </View>
   );
 }
@@ -2072,9 +2098,16 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
   },
-  introLogo: {
-    height: 96,
-    width: 284,
+  introLogoRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+  },
+  introLogoText: {
+    color: "#fff",
+    fontFamily: fontFamily.bold,
+    fontSize: 34,
+    letterSpacing: -0.5,
   },
   screen: {
     backgroundColor: figmaColors.bg,
