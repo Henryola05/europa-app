@@ -22,7 +22,13 @@ import {
   type StoredAccount,
   useAccountsStore,
 } from "@/stores/accounts";
-import { currencies, currencySymbols, type Currency } from "./index";
+import {
+  convertCents,
+  currencies,
+  currencySymbols,
+  fetchExchangeRates,
+  type Currency,
+} from "./index";
 import {
   CreateAccountBottomSheet,
   type CreateAccountValues,
@@ -78,13 +84,20 @@ type GroupData = {
   accounts: DisplayAccount[];
 };
 
-function groupAccounts(accounts: DisplayAccount[]): GroupData[] {
+function groupAccounts(
+  accounts: DisplayAccount[],
+  homeCurrencyCode: string,
+  exchangeRates: Record<string, number>,
+): GroupData[] {
   return accountGroupOrder
     .map((group) => {
       const items = accounts.filter((a) => a.group === group);
       return {
         group,
-        totalCents: items.reduce((s, a) => s + a.balanceCents, 0),
+        totalCents: items.reduce(
+          (s, a) => s + convertCents(a.balanceCents, a.currencyCode ?? homeCurrencyCode, homeCurrencyCode, exchangeRates),
+          0,
+        ),
         accounts: items,
       };
     })
@@ -255,6 +268,7 @@ export default function AccountsScreen() {
 
   const [allTransactions, setAllTransactions] = useState<StoredTransaction[]>([]);
   const [homeCurrencyCode, setHomeCurrencyCode] = useState("USD");
+  const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({});
 
   useFocusEffect(
     useCallback(() => {
@@ -263,7 +277,9 @@ export default function AccountsScreen() {
         AsyncStorage.getItem(HOME_CURRENCY_KEY),
       ]).then(([txData, homeCurrency]) => {
         if (txData) setAllTransactions(JSON.parse(txData));
-        if (homeCurrency) setHomeCurrencyCode(homeCurrency);
+        const code = homeCurrency ?? "USD";
+        if (homeCurrency) setHomeCurrencyCode(code);
+        fetchExchangeRates(code).then(setExchangeRates).catch(() => {});
       }).catch(() => {});
     }, []),
   );
@@ -273,7 +289,7 @@ export default function AccountsScreen() {
     [storeAccounts, allTransactions],
   );
 
-  const groups = groupAccounts(displayAccounts);
+  const groups = groupAccounts(displayAccounts, homeCurrencyCode, exchangeRates);
 
   const [dragGroup, setDragGroup] = useState<AccountGroup | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -476,7 +492,7 @@ export default function AccountsScreen() {
                       ? { color: figmaColors.error["600"] }
                       : undefined,
                 ]}>
-                  {formatBalance(groupData.totalCents)}
+                  {formatBalance(groupData.totalCents, currencySymbols[homeCurrencyCode] ?? homeCurrencyCode)}
                 </Text>
               </View>
               {groupData.accounts.map((account, index) => (

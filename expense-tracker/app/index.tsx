@@ -59,7 +59,7 @@ function triggerDeleteThresholdHaptic() {
 
 const rateCache: Record<string, { rates: Record<string, number>; ts: number }> = {};
 
-async function fetchExchangeRates(base: string): Promise<Record<string, number>> {
+export async function fetchExchangeRates(base: string): Promise<Record<string, number>> {
   const cached = rateCache[base];
   if (cached && Date.now() - cached.ts < 3_600_000) return cached.rates;
   const res = await fetch(`https://open.er-api.com/v6/latest/${base}`);
@@ -68,7 +68,7 @@ async function fetchExchangeRates(base: string): Promise<Record<string, number>>
   return json.rates;
 }
 
-function convertCents(cents: number, fromCode: string, toCode: string, rates: Record<string, number>): number {
+export function convertCents(cents: number, fromCode: string, toCode: string, rates: Record<string, number>): number {
   if (fromCode === toCode || !rates[fromCode]) return cents;
   return Math.round((cents / rates[fromCode]) * rates[toCode]);
 }
