@@ -46,6 +46,7 @@ type StoredTransaction = {
   id: string;
   type: "income" | "expense" | "transfer";
   amountCents: number;
+  currencyCode?: string;
   accountName: string;
   destinationAccountName?: string;
 };
@@ -62,16 +63,25 @@ function formatBalance(cents: number, symbol = "$") {
   return `${sign}${symbol}${whole}.${decimal}`;
 }
 
-function computeLiveBalance(account: StoredAccount, transactions: StoredTransaction[]): number {
+function computeLiveBalance(
+  account: StoredAccount,
+  transactions: StoredTransaction[],
+  exchangeRates: Record<string, number>,
+): number {
+  const accountCurrency = account.currencyCode ?? "USD";
   return account.openingBalanceCents + transactions.reduce((sum, tx) => {
+    const txCurrency = tx.currencyCode ?? accountCurrency;
+    const amount = txCurrency !== accountCurrency
+      ? convertCents(tx.amountCents, txCurrency, accountCurrency, exchangeRates)
+      : tx.amountCents;
     if (tx.type === "transfer") {
-      if (tx.accountName === account.name) return sum - tx.amountCents;
-      if (tx.destinationAccountName === account.name) return sum + tx.amountCents;
+      if (tx.accountName === account.name) return sum - amount;
+      if (tx.destinationAccountName === account.name) return sum + amount;
       return sum;
     }
     if (tx.accountName !== account.name) return sum;
-    if (tx.type === "income") return sum + tx.amountCents;
-    if (tx.type === "expense") return sum - tx.amountCents;
+    if (tx.type === "income") return sum + amount;
+    if (tx.type === "expense") return sum - amount;
     return sum;
   }, 0);
 }
@@ -285,8 +295,8 @@ export default function AccountsScreen() {
   );
 
   const displayAccounts: DisplayAccount[] = useMemo(
-    () => storeAccounts.map((a) => ({ ...a, balanceCents: computeLiveBalance(a, allTransactions) })),
-    [storeAccounts, allTransactions],
+    () => storeAccounts.map((a) => ({ ...a, balanceCents: computeLiveBalance(a, allTransactions, exchangeRates) })),
+    [storeAccounts, allTransactions, exchangeRates],
   );
 
   const groups = groupAccounts(displayAccounts, homeCurrencyCode, exchangeRates);
