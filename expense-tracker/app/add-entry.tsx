@@ -27,6 +27,7 @@ import {
 import Svg, { Circle, ClipPath, Defs, G, Path, Rect } from "react-native-svg";
 
 import { figmaColors } from "@/constants/colors";
+import { EmojiPickerSheet } from "@/components/EmojiPickerSheet";
 import { COLOR_PALETTE } from "@/constants/categories";
 import { fontFamily } from "@/constants/typography";
 import { useCategoriesStore } from "@/stores/categories";
@@ -677,6 +678,7 @@ function NewCategorySheet({
   onClose,
   onDelete,
   onSave,
+  type = "expense",
   visible,
 }: {
   initialColor?: string;
@@ -685,6 +687,7 @@ function NewCategorySheet({
   onClose: () => void;
   onDelete?: () => void;
   onSave: (category: ExpenseCategory, color: string) => void;
+  type?: "expense" | "income";
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
@@ -694,7 +697,8 @@ function NewCategorySheet({
   const [name, setName] = useState("");
   const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[6]);
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
-  const emojiInputRef = useRef<TextInput>(null);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const nameInputRef = useRef<TextInput>(null);
 
   // Refs so useEffect can read latest initial values without re-running on every prop change
   const initialEmojiRef = useRef(initialEmoji);
@@ -727,6 +731,7 @@ function NewCategorySheet({
       setName(initialNameRef.current ?? "");
       setSelectedColor(initialColorRef.current ?? COLOR_PALETTE[6]);
       setIsColorPickerOpen(false);
+      setIsEmojiPickerOpen(true);
       translateY.setValue(500);
       Animated.parallel([
         Animated.timing(backdropOpacity, {
@@ -741,7 +746,6 @@ function NewCategorySheet({
           useNativeDriver: true,
         }),
       ]).start();
-      setTimeout(() => emojiInputRef.current?.focus(), 300);
     } else {
       backdropOpacity.setValue(0);
       translateY.setValue(500);
@@ -789,7 +793,7 @@ function NewCategorySheet({
             ]}
           >
             <View style={styles.categorySheetHeader}>
-              <Text style={styles.categorySheetTitle}>Expense Category</Text>
+              <Text style={styles.categorySheetTitle}>{type === "income" ? "Income" : "Expense"} Category</Text>
               <View style={styles.categorySheetHeaderActions}>
                 {onDelete && (
                   <Pressable
@@ -813,16 +817,6 @@ function NewCategorySheet({
             </View>
 
             <View style={styles.categoryDivider} />
-
-            {/* Always mounted so the keyboard never closes */}
-            <TextInput
-              ref={emojiInputRef}
-              onChangeText={(text) => {
-                if (text) setEmoji(text);
-              }}
-              style={styles.hiddenEmojiInput}
-              value=""
-            />
 
             {isColorPickerOpen ? (
               <View style={styles.colorPickerPanel}>
@@ -855,7 +849,7 @@ function NewCategorySheet({
                 <Pressable
                   accessibilityLabel="Pick emoji"
                   accessibilityRole="button"
-                  onPress={() => emojiInputRef.current?.focus()}
+                  onPress={() => setIsEmojiPickerOpen(true)}
                   style={[styles.emojiPreviewBox, { backgroundColor: selectedColor }]}
                 >
                   {emoji ? (
@@ -878,6 +872,7 @@ function NewCategorySheet({
                 ]}
               />
               <TextInput
+                ref={nameInputRef}
                 onChangeText={setName}
                 placeholder="Category Name"
                 placeholderTextColor={figmaColors.grayNeutral["400"]}
@@ -901,6 +896,14 @@ function NewCategorySheet({
           </Animated.View>
         </View>
       </KeyboardAvoidingView>
+      <EmojiPickerSheet
+        visible={isEmojiPickerOpen}
+        onSelect={(e) => {
+          setEmoji(e);
+          setTimeout(() => nameInputRef.current?.focus(), 350);
+        }}
+        onClose={() => setIsEmojiPickerOpen(false)}
+      />
     </Modal>
   );
 }
@@ -2632,6 +2635,7 @@ function CategoryPickerSheet({
         }}
         onDelete={editingCategory ? handleDeleteEditingCategory : undefined}
         onSave={editingCategory ? handleUpdateCategory : handleAddCategory}
+        type={type}
         visible={isNewCategoryOpen || editingCategory !== null}
       />
     </Modal>
@@ -4533,11 +4537,6 @@ const styles = StyleSheet.create({
   emojiPreviewText: {
     fontSize: 44,
     lineHeight: 52,
-  },
-  hiddenEmojiInput: {
-    height: 0,
-    opacity: 0,
-    width: 0,
   },
   newCategoryNameRow: {
     alignItems: "center",
