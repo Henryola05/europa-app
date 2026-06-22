@@ -39,14 +39,6 @@ export const accountGroupOrder: AccountGroup[] = [
   "Others",
 ];
 
-const defaultAccounts: StoredAccount[] = [
-  { id: "cash-wallet", name: "Cash Wallet", group: "Cash", openingBalanceCents: 0, currencyCode: "USD" },
-  { id: "chase", name: "Chase", group: "Accounts", openingBalanceCents: 0, currencyCode: "USD" },
-  { id: "wells-fargo", name: "Wells Fargo", group: "Accounts", openingBalanceCents: 0, currencyCode: "USD" },
-  { id: "venmo", name: "Venmo", group: "Mobile Money", openingBalanceCents: 0, currencyCode: "USD" },
-  { id: "cash-app", name: "Cash App", group: "Mobile Money", openingBalanceCents: 0, currencyCode: "USD" },
-];
-
 type AccountsState = {
   accounts: StoredAccount[];
   addAccount: (account: StoredAccount) => void;
@@ -59,7 +51,7 @@ type AccountsState = {
 export const useAccountsStore = create<AccountsState>()(
   persist(
     (set) => ({
-      accounts: defaultAccounts,
+      accounts: [],
 
       addAccount: (account) =>
         set((s) => ({ accounts: [...s.accounts, account] })),
