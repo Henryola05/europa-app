@@ -17,6 +17,7 @@ import Svg, { Circle, Path } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { figmaColors } from "@/constants/colors";
+import { EmojiPickerSheet } from "@/components/EmojiPickerSheet";
 import { COLOR_PALETTE, type Category } from "@/constants/categories";
 import { fontFamily } from "@/constants/typography";
 import { useCategoriesStore } from "@/stores/categories";
@@ -255,7 +256,8 @@ function NewCategorySheet({
   const [name, setName] = useState("");
   const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[6]);
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
-  const emojiInputRef = useRef<TextInput>(null);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const nameInputRef = useRef<TextInput>(null);
 
   const initialEmojiRef = useRef(initialEmoji);
   const initialNameRef = useRef(initialName);
@@ -277,12 +279,12 @@ function NewCategorySheet({
       setName(initialNameRef.current ?? "");
       setSelectedColor(initialColorRef.current ?? COLOR_PALETTE[6]);
       setIsColorPickerOpen(false);
+      setIsEmojiPickerOpen(true);
       translateY.setValue(500);
       Animated.parallel([
         Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
         Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
       ]).start();
-      setTimeout(() => emojiInputRef.current?.focus(), 300);
     } else {
       backdropOpacity.setValue(0);
       translateY.setValue(500);
@@ -345,13 +347,6 @@ function NewCategorySheet({
 
             <View style={styles.categoryDivider} />
 
-            <TextInput
-              ref={emojiInputRef}
-              onChangeText={(text) => { if (text) setEmoji(text); }}
-              style={styles.hiddenEmojiInput}
-              value=""
-            />
-
             {isColorPickerOpen ? (
               <View style={styles.colorPickerPanel}>
                 {[0, 1, 2, 3].map((rowIdx) => (
@@ -375,7 +370,7 @@ function NewCategorySheet({
                 <Pressable
                   accessibilityLabel="Pick emoji"
                   accessibilityRole="button"
-                  onPress={() => emojiInputRef.current?.focus()}
+                  onPress={() => setIsEmojiPickerOpen(true)}
                   style={[styles.emojiPreviewBox, { backgroundColor: selectedColor }]}
                 >
                   {emoji ? (
@@ -395,6 +390,7 @@ function NewCategorySheet({
                 style={[styles.newCategoryColorChip, { backgroundColor: selectedColor }]}
               />
               <TextInput
+                ref={nameInputRef}
                 onChangeText={setName}
                 placeholder="Category Name"
                 placeholderTextColor={figmaColors.grayNeutral["400"]}
@@ -418,6 +414,14 @@ function NewCategorySheet({
           </Animated.View>
         </View>
       </KeyboardAvoidingView>
+      <EmojiPickerSheet
+        visible={isEmojiPickerOpen}
+        onSelect={(e) => {
+          setEmoji(e);
+          setTimeout(() => nameInputRef.current?.focus(), 350);
+        }}
+        onClose={() => setIsEmojiPickerOpen(false)}
+      />
     </Modal>
   );
 }
@@ -769,11 +773,6 @@ const styles = StyleSheet.create({
   emojiPreviewText: {
     fontSize: 44,
     lineHeight: 52,
-  },
-  hiddenEmojiInput: {
-    height: 0,
-    opacity: 0,
-    width: 0,
   },
   newCategoryNameRow: {
     alignItems: "center",
