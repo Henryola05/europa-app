@@ -2749,12 +2749,31 @@ function AmountInputSheet({
   const [expression, setExpression] = useState(centsToExpression(amountCents));
   const [isCurrencyPickerOpen, setIsCurrencyPickerOpen] = useState(false);
   const currencyCode = selectedCurrency.code;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(800)).current;
 
   useEffect(() => {
     if (visible) {
       setExpression(centsToExpression(amountCents));
+      translateY.setValue(800);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
+        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
+      ]).start();
     }
-  }, [amountCents, visible]);
+  }, [amountCents, backdropOpacity, translateY, visible]);
+
+  const closeWithAnimation = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+      Animated.timing(translateY, { duration: 220, toValue: 800, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) {
+        onClose();
+        onDismiss?.();
+      }
+    });
+  }, [backdropOpacity, onClose, onDismiss, translateY]);
 
   const handleKeyPress = (key: KeypadKey) => {
     if (key.type === "empty") {
@@ -2763,7 +2782,7 @@ function AmountInputSheet({
 
     if (key.type === "ok") {
       onChangeAmount(expressionToCents(expression));
-      onClose();
+      closeWithAnimation();
       return;
     }
 
@@ -2808,24 +2827,28 @@ function AmountInputSheet({
 
   return (
     <Modal
-      animationType="slide"
-      onDismiss={onDismiss}
-      onRequestClose={onClose}
+      animationType="none"
+      onRequestClose={closeWithAnimation}
       transparent
       visible={visible}
     >
       <View style={styles.amountSheetBackdrop}>
-        <Pressable
-          accessibilityLabel="Close amount input"
-          accessibilityRole="button"
-          onPress={onClose}
-          style={styles.amountSheetDismissArea}
-        />
+        <Animated.View
+          pointerEvents="box-none"
+          style={[styles.amountSheetOverlay, { opacity: backdropOpacity }]}
+        >
+          <Pressable
+            accessibilityLabel="Close amount input"
+            accessibilityRole="button"
+            onPress={closeWithAnimation}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
 
-        <View
+        <Animated.View
           style={[
             styles.amountSheet,
-            { paddingBottom: Math.max(insets.bottom, 8) },
+            { paddingBottom: Math.max(insets.bottom, 8), transform: [{ translateY }] },
           ]}
         >
           <View style={styles.amountSheetHeader}>
@@ -2834,7 +2857,7 @@ function AmountInputSheet({
               accessibilityLabel="Close amount input"
               accessibilityRole="button"
               hitSlop={10}
-              onPress={onClose}
+              onPress={closeWithAnimation}
               style={styles.closeButton}
             >
               <CloseIcon />
@@ -2907,7 +2930,7 @@ function AmountInputSheet({
               </View>
             ))}
           </View>
-        </View>
+        </Animated.View>
       </View>
 
       <CurrencyPicker
@@ -3870,12 +3893,12 @@ const styles = StyleSheet.create({
     top: 0,
   },
   amountSheetBackdrop: {
-    backgroundColor: figmaColors.base.overlay,
     flex: 1,
     justifyContent: "flex-end",
   },
-  amountSheetDismissArea: {
-    flex: 1,
+  amountSheetOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: figmaColors.base.overlay,
   },
   amountSheet: {
     backgroundColor: figmaColors.bg,
