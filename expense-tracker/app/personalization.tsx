@@ -1,13 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, Pressable, StyleSheet, Switch, Text, View } from "react-native";
-import Svg, { Path } from "react-native-svg";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Animated, Appearance, Modal, Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import Svg, { Path, Rect } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { figmaColors } from "@/constants/colors";
 import { fontFamily } from "@/constants/typography";
+import { useThemeStore, type AppTheme } from "@/stores/theme";
 
 // ─── SVG paths ───────────────────────────────────────────────────────────────
 
@@ -69,6 +70,233 @@ function ChevronRight() {
   );
 }
 
+// ─── Theme Picker Sheet ───────────────────────────────────────────────────────
+
+const THEME_LABELS: Record<AppTheme, string> = {
+  light: "Light",
+  dark: "Dark",
+  system: "System",
+};
+
+function PhoneMockLight() {
+  return (
+    <Svg width={80} height={120} viewBox="0 0 80 120" fill="none">
+      <Rect x={1} y={1} width={78} height={118} rx={11} fill="#fff" stroke={figmaColors.grayNeutral["200"]} strokeWidth={2} />
+      <Rect x={28} y={8} width={24} height={5} rx={2.5} fill={figmaColors.grayNeutral["200"]} />
+      <Rect x={10} y={24} width={60} height={10} rx={3} fill={figmaColors.grayNeutral["100"]} />
+      <Rect x={10} y={40} width={60} height={10} rx={3} fill={figmaColors.grayNeutral["100"]} />
+      <Rect x={10} y={56} width={60} height={10} rx={3} fill={figmaColors.grayNeutral["100"]} />
+      <Rect x={10} y={72} width={60} height={10} rx={3} fill={figmaColors.grayNeutral["100"]} />
+      <Rect x={10} y={96} width={60} height={14} rx={7} fill={figmaColors.grayNeutral["200"]} />
+    </Svg>
+  );
+}
+
+function PhoneMockDark() {
+  return (
+    <Svg width={80} height={120} viewBox="0 0 80 120" fill="none">
+      <Rect x={1} y={1} width={78} height={118} rx={11} fill="#111927" stroke="#374151" strokeWidth={2} />
+      <Rect x={28} y={8} width={24} height={5} rx={2.5} fill="#374151" />
+      <Rect x={10} y={24} width={60} height={10} rx={3} fill="#1f2937" />
+      <Rect x={10} y={40} width={60} height={10} rx={3} fill="#1f2937" />
+      <Rect x={10} y={56} width={60} height={10} rx={3} fill="#1f2937" />
+      <Rect x={10} y={72} width={60} height={10} rx={3} fill="#1f2937" />
+      <Rect x={10} y={96} width={60} height={14} rx={7} fill="#374151" />
+    </Svg>
+  );
+}
+
+function PhoneMockSystem() {
+  return (
+    <Svg width={80} height={120} viewBox="0 0 80 120" fill="none">
+      {/* Left half: light */}
+      <Rect x={1} y={1} width={78} height={118} rx={11} fill="#fff" stroke={figmaColors.grayNeutral["200"]} strokeWidth={2} />
+      {/* Right half: dark overlay via clip */}
+      <Rect x={40} y={1} width={39} height={118} rx={0} fill="#111927" />
+      {/* Mask bottom-right corner */}
+      <Rect x={69} y={1} width={10} height={118} rx={11} fill="#111927" />
+      {/* Re-draw border so it's clean */}
+      <Rect x={1} y={1} width={78} height={118} rx={11} fill="none" stroke={figmaColors.grayNeutral["200"]} strokeWidth={2} />
+      {/* Camera pill */}
+      <Rect x={28} y={8} width={24} height={5} rx={2.5} fill={figmaColors.grayNeutral["300"]} />
+      {/* Rows left=light, right=dark */}
+      <Rect x={10} y={24} width={28} height={10} rx={3} fill={figmaColors.grayNeutral["100"]} />
+      <Rect x={42} y={24} width={28} height={10} rx={3} fill="#1f2937" />
+      <Rect x={10} y={40} width={28} height={10} rx={3} fill={figmaColors.grayNeutral["100"]} />
+      <Rect x={42} y={40} width={28} height={10} rx={3} fill="#1f2937" />
+      <Rect x={10} y={56} width={28} height={10} rx={3} fill={figmaColors.grayNeutral["100"]} />
+      <Rect x={42} y={56} width={28} height={10} rx={3} fill="#1f2937" />
+      <Rect x={10} y={72} width={28} height={10} rx={3} fill={figmaColors.grayNeutral["100"]} />
+      <Rect x={42} y={72} width={28} height={10} rx={3} fill="#1f2937" />
+      {/* Bottom button */}
+      <Rect x={10} y={96} width={60} height={14} rx={7} fill={figmaColors.grayNeutral["300"]} />
+    </Svg>
+  );
+}
+
+const THEME_OPTIONS: { value: AppTheme; Mock: () => React.ReactElement }[] = [
+  { value: "light", Mock: PhoneMockLight },
+  { value: "dark", Mock: PhoneMockDark },
+  { value: "system", Mock: PhoneMockSystem },
+];
+
+function ThemePickerSheet({
+  visible,
+  onClose,
+}: {
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const { theme, setTheme } = useThemeStore();
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(400)).current;
+  const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    if (visible) {
+      translateY.setValue(400);
+      backdropOpacity.setValue(0);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { toValue: 1, duration: 280, useNativeDriver: true }),
+        Animated.spring(translateY, { toValue: 0, bounciness: 0, speed: 18, useNativeDriver: true }),
+      ]).start();
+    } else {
+      backdropOpacity.setValue(0);
+      translateY.setValue(400);
+    }
+  }, [visible, backdropOpacity, translateY]);
+
+  const closeWithAnimation = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(backdropOpacity, { toValue: 0, duration: 220, useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: 400, duration: 220, useNativeDriver: true }),
+    ]).start(({ finished }) => { if (finished) onClose(); });
+  }, [backdropOpacity, translateY, onClose]);
+
+  const handleSelect = useCallback((value: AppTheme) => {
+    setTheme(value);
+    Appearance.setColorScheme(value === "system" ? null : value);
+  }, [setTheme]);
+
+  return (
+    <Modal animationType="none" transparent visible={visible} onRequestClose={closeWithAnimation}>
+      <View style={themeStyles.root}>
+        <Animated.View style={[themeStyles.backdrop, { opacity: backdropOpacity }]}>
+          <Pressable onPress={closeWithAnimation} style={StyleSheet.absoluteFill} />
+        </Animated.View>
+        <Animated.View style={[themeStyles.sheet, { paddingBottom: Math.max(insets.bottom, 24), transform: [{ translateY }] }]}>
+          {/* Header */}
+          <View style={themeStyles.header}>
+            <Text style={themeStyles.title}>App Theme</Text>
+            <Pressable hitSlop={10} onPress={closeWithAnimation} style={themeStyles.closeButton}>
+              <Svg fill="none" height={20} viewBox="0 0 20 20" width={20}>
+                <Path clipRule="evenodd" d={CLOSE_PATH} fill={figmaColors.grayNeutral["500"]} fillRule="evenodd" />
+              </Svg>
+            </Pressable>
+          </View>
+
+          <View style={themeStyles.divider} />
+
+          {/* Options */}
+          <View style={themeStyles.optionsRow}>
+            {THEME_OPTIONS.map(({ value, Mock }) => {
+              const selected = theme === value;
+              return (
+                <Pressable
+                  key={value}
+                  accessibilityLabel={`${THEME_LABELS[value]} theme`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => handleSelect(value)}
+                  style={themeStyles.optionItem}
+                >
+                  <View style={[themeStyles.mockWrapper, selected && themeStyles.mockWrapperSelected]}>
+                    <Mock />
+                  </View>
+                  <Text style={[themeStyles.optionLabel, selected && themeStyles.optionLabelSelected]}>
+                    {THEME_LABELS[value]}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+const themeStyles = StyleSheet.create({
+  root: { flex: 1, justifyContent: "flex-end" },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(17,25,39,0.4)",
+  },
+  sheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+  },
+  header: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 16,
+  },
+  title: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 20,
+    letterSpacing: -0.3,
+  },
+  closeButton: {
+    alignItems: "center",
+    backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 999,
+    height: 36,
+    justifyContent: "center",
+    width: 36,
+  },
+  divider: {
+    backgroundColor: figmaColors.grayNeutral["100"],
+    height: 1,
+  },
+  optionsRow: {
+    flexDirection: "row",
+    gap: 16,
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: 8,
+  },
+  optionItem: {
+    alignItems: "center",
+    flex: 1,
+    gap: 12,
+  },
+  mockWrapper: {
+    borderColor: "transparent",
+    borderRadius: 14,
+    borderWidth: 2.5,
+    overflow: "hidden",
+  },
+  mockWrapperSelected: {
+    borderColor: figmaColors.blue["500"],
+  },
+  optionLabel: {
+    color: figmaColors.grayNeutral["400"],
+    fontFamily: fontFamily.medium,
+    fontSize: 15,
+    letterSpacing: -0.15,
+  },
+  optionLabelSelected: {
+    color: figmaColors.blue["500"],
+    fontFamily: fontFamily.semiBold,
+  },
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 const HAPTIC_KEY = "europa:haptic-enabled";
@@ -77,6 +305,8 @@ export default function PersonalizationScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [hapticEnabled, setHapticEnabled] = useState(false);
+  const [isThemePickerOpen, setIsThemePickerOpen] = useState(false);
+  const { theme } = useThemeStore();
 
   const backdropOpacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(600)).current;
@@ -143,12 +373,13 @@ export default function PersonalizationScreen() {
           {/* App Theme */}
           <Pressable
             android_ripple={{ color: figmaColors.grayNeutral["100"] }}
+            onPress={() => setIsThemePickerOpen(true)}
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
           >
             <RowIcon bg={figmaColors.blue["500"]} paths={THEME_ICON} />
             <Text style={styles.label}>App Theme</Text>
             <View style={styles.valueRow}>
-              <Text style={styles.value}>System</Text>
+              <Text style={styles.value}>{THEME_LABELS[theme]}</Text>
               <ChevronRight />
             </View>
           </Pressable>
@@ -181,6 +412,11 @@ export default function PersonalizationScreen() {
           </View>
         </View>
       </Animated.View>
+
+      <ThemePickerSheet
+        visible={isThemePickerOpen}
+        onClose={() => setIsThemePickerOpen(false)}
+      />
     </View>
   );
 }
