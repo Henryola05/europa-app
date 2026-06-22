@@ -223,6 +223,7 @@ export default function SettingsScreen() {
                 item.label === "Currency & Preferences" ? () => router.push("/currency-preferences") :
                 item.label === "Categories & Accounts" ? () => router.push("/categories-accounts") :
                 item.label === "Notifications" ? () => router.push("/categories-alerts") :
+                item.label === "Data Management" ? () => router.push("/data-management") :
                 item.onPress
               }
               style={({ pressed }) => [

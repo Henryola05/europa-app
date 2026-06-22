@@ -39,6 +39,7 @@ import Svg, { Circle, ClipPath, Defs, G, Path, Rect } from "react-native-svg";
 
 import { figmaColors } from "@/constants/colors";
 import { fontFamily } from "@/constants/typography";
+import { useUIStore } from "@/stores/ui";
 
 const HOME_CURRENCY_KEY = "europa:home-currency";
 const WEEK_START_KEY = "europa:week-start";
@@ -613,6 +614,7 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [tabBarHeight, setTabBarHeight] = useState(0);
   const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion | null>(
     null,
   );
@@ -698,6 +700,18 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
       return () => clearTimeout(t);
     }
   }, [deletedType, recorded]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const msg = useUIStore.getState().pendingToast;
+      if (!msg) return;
+      useUIStore.getState().setPendingToast(null);
+      setToastMessage(msg);
+      setShowToast(true);
+      const t = setTimeout(() => setShowToast(false), 3000);
+      return () => clearTimeout(t);
+    }, []),
+  );
 
   useEffect(() => {
     if (!pendingDeletion) return;
@@ -963,15 +977,17 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
       <ToastNotification
         bottomOffset={tabBarHeight + 8}
         message={
-          pendingDeletion || recorded === "deleted"
-            ? `Your ${pendingDeletion?.transaction.type ?? deletedType ?? "transaction"} has been deleted`
-            : recorded === "saved"
-              ? "Transaction saved"
-              : transactions[0]?.type === "income"
-                ? "Your income has been recorded"
-                : transactions[0]?.type === "transfer"
-                  ? "Your transfer has been recorded"
-                  : "Your expense has been recorded"
+          toastMessage && !pendingDeletion && recorded !== "deleted" && recorded !== "1" && recorded !== "saved"
+            ? toastMessage
+            : pendingDeletion || recorded === "deleted"
+              ? `Your ${pendingDeletion?.transaction.type ?? deletedType ?? "transaction"} has been deleted`
+              : recorded === "saved"
+                ? "Transaction saved"
+                : transactions[0]?.type === "income"
+                  ? "Your income has been recorded"
+                  : transactions[0]?.type === "transfer"
+                    ? "Your transfer has been recorded"
+                    : "Your expense has been recorded"
         }
         onAction={pendingDeletion ? handleUndoDelete : undefined}
         variant={pendingDeletion || recorded === "deleted" ? "destructive" : "default"}

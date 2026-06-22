@@ -2318,8 +2318,7 @@ function CategoryPickerSheet({
 
   useEffect(() => {
     setLocalCategories([...storeCategories]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeExpense, storeIncome]);
+  }, [storeCategories]);
 
   const closeSheet = useCallback(() => {
     Animated.parallel([
