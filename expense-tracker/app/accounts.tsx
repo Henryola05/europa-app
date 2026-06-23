@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -11,8 +11,8 @@ import {
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle, ClipPath, Defs, G, Path, Rect } from "react-native-svg";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { figmaColors } from "@/constants/colors";
 import { fontFamily } from "@/constants/typography";
@@ -22,6 +22,7 @@ import {
   type StoredAccount,
   useAccountsStore,
 } from "@/stores/accounts";
+import { BottomTabBar } from "@/components/BottomTabBar";
 import {
   convertCents,
   currencies,
@@ -333,9 +334,6 @@ function AccountsEmptyIcon() {
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function AccountsScreen() {
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
-
   const {
     accounts: storeAccounts,
     addAccount,
@@ -411,24 +409,6 @@ export default function AccountsScreen() {
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
-
-  // Sheet open animation
-  const backdropOpacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(600)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
-      Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
-    ]).start();
-  }, []);
-
-  const closeSheet = useCallback(() => {
-    Animated.parallel([
-      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
-      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
-    ]).start(({ finished }) => { if (finished) router.back(); });
-  }, []);
 
   const handleDragStart = useCallback((group: AccountGroup, index: number, y0: number) => {
     floatTopAnim.setValue(y0 - ACCOUNT_ITEM_HEIGHT / 2);
@@ -524,68 +504,54 @@ export default function AccountsScreen() {
   }, [dragGroup, dragIndex, snapGroup, snapGroupIndex]);
 
   return (
-    <View style={styles.root}>
-      {/* Backdrop */}
-      <Animated.View
-        pointerEvents="box-none"
-        style={[styles.backdrop, { opacity: backdropOpacity }]}
-      >
-        <Pressable style={StyleSheet.absoluteFill} onPress={closeSheet} />
-      </Animated.View>
-
-      {/* Sheet */}
-      <Animated.View
-        style={[
-          styles.sheet,
-          { paddingBottom: Math.max(insets.bottom, 16) },
-          { transform: [{ translateY }] },
-        ]}
-      >
-        {/* Header */}
-        <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>Accounts</Text>
-          <View style={styles.headerActions}>
-            <Pressable
-              accessibilityLabel={isEditMode ? "Done editing" : "Edit accounts"}
-              accessibilityRole="button"
-              onPress={() => setIsEditMode((v) => !v)}
-              style={[styles.headerButton, isEditMode && styles.headerButtonActive]}
-            >
-              <PencilIcon active={isEditMode} />
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Add new account"
-              accessibilityRole="button"
-              onPress={() => setIsCreateOpen(true)}
-              style={styles.headerButton}
-            >
-              <PlusIcon />
-            </Pressable>
-          </View>
+    <SafeAreaView edges={["top"]} style={styles.root}>
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Accounts</Text>
+        <View style={styles.headerActions}>
+          <Pressable
+            accessibilityLabel={isEditMode ? "Done editing" : "Edit accounts"}
+            accessibilityRole="button"
+            onPress={() => setIsEditMode((v) => !v)}
+            style={[styles.headerButton, isEditMode && styles.headerButtonActive]}
+          >
+            <PencilIcon active={isEditMode} />
+          </Pressable>
+          <Pressable
+            accessibilityLabel="Add new account"
+            accessibilityRole="button"
+            onPress={() => setIsCreateOpen(true)}
+            style={styles.headerButton}
+          >
+            <PlusIcon />
+          </Pressable>
         </View>
+      </View>
 
-        <View style={styles.divider} />
+      <View style={styles.divider} />
 
-        {/* Summary bar */}
-        <View style={styles.summaryBar}>
-          <View style={styles.summaryItem}>
-            <Text style={[styles.summaryLabel, { color: figmaColors.success["500"] }]}>Assets</Text>
-            <Text style={styles.summaryAmount}>{formatBalance(totalAssetsCents, currencySymbol)}</Text>
-          </View>
-          <View style={styles.summaryDivider} />
-          <View style={styles.summaryItem}>
-            <Text style={[styles.summaryLabel, { color: figmaColors.error["500"] }]}>Liabilities</Text>
-            <Text style={styles.summaryAmount}>{formatBalance(Math.abs(totalLiabilitiesCents), currencySymbol)}</Text>
-          </View>
-          <View style={styles.summaryDivider} />
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Total</Text>
-            <Text style={styles.summaryAmount}>{formatBalance(totalNetCents, currencySymbol)}</Text>
-          </View>
+      {/* Summary bar */}
+      <View style={styles.summaryBar}>
+        <View style={styles.summaryItem}>
+          <Text style={[styles.summaryLabel, { color: figmaColors.success["500"] }]}>Assets</Text>
+          <Text style={styles.summaryAmount}>{formatBalance(totalAssetsCents, currencySymbol)}</Text>
         </View>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryItem}>
+          <Text style={[styles.summaryLabel, { color: figmaColors.error["500"] }]}>Liabilities</Text>
+          <Text style={styles.summaryAmount}>{formatBalance(Math.abs(totalLiabilitiesCents), currencySymbol)}</Text>
+        </View>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryLabel}>Total</Text>
+          <Text style={styles.summaryAmount}>{formatBalance(totalNetCents, currencySymbol)}</Text>
+        </View>
+      </View>
 
-        <View style={styles.divider} />
+      <View style={styles.divider} />
 
+      {/* Content */}
+      <View style={styles.content}>
         {storeAccounts.length === 0 ? (
           <View style={styles.emptyState}>
             <AccountsEmptyIcon />
@@ -602,52 +568,52 @@ export default function AccountsScreen() {
             </Pressable>
           </View>
         ) : (
-        <ScrollView
-          contentContainerStyle={styles.listContent}
-          scrollEnabled={dragIndex === null}
-          showsVerticalScrollIndicator={false}
-        >
-          {groups.map((groupData) => (
-            <View
-              key={groupData.group}
-              onLayout={(e) => { groupYRef.current[groupData.group] = e.nativeEvent.layout.y; }}
-            >
+          <ScrollView
+            contentContainerStyle={styles.listContent}
+            scrollEnabled={dragIndex === null}
+            showsVerticalScrollIndicator={false}
+          >
+            {groups.map((groupData) => (
               <View
-                onLayout={(e) => { groupHeaderHeightRef.current[groupData.group] = e.nativeEvent.layout.height; }}
-                style={styles.groupHeader}
+                key={groupData.group}
+                onLayout={(e) => { groupYRef.current[groupData.group] = e.nativeEvent.layout.y; }}
               >
-                <Text style={styles.groupName}>{groupData.group}</Text>
-                <Text style={[
-                  styles.groupTotal,
-                  groupData.totalCents > 0
-                    ? { color: figmaColors.grayNeutral["900"] }
-                    : groupData.totalCents < 0
-                      ? { color: figmaColors.error["600"] }
-                      : undefined,
-                ]}>
-                  {formatBalance(groupData.totalCents, currencySymbols[homeCurrencyCode] ?? homeCurrencyCode)}
-                </Text>
+                <View
+                  onLayout={(e) => { groupHeaderHeightRef.current[groupData.group] = e.nativeEvent.layout.height; }}
+                  style={styles.groupHeader}
+                >
+                  <Text style={styles.groupName}>{groupData.group}</Text>
+                  <Text style={[
+                    styles.groupTotal,
+                    groupData.totalCents > 0
+                      ? { color: figmaColors.grayNeutral["900"] }
+                      : groupData.totalCents < 0
+                        ? { color: figmaColors.error["600"] }
+                        : undefined,
+                  ]}>
+                    {formatBalance(groupData.totalCents, currencySymbols[homeCurrencyCode] ?? homeCurrencyCode)}
+                  </Text>
+                </View>
+                {groupData.accounts.map((account, index) => (
+                  <AccountRow
+                    account={account}
+                    balance={account.balanceCents}
+                    currencySymbol={currencySymbols[account.currencyCode ?? "USD"] ?? account.currencyCode ?? "$"}
+                    isDragging={dragGroup === groupData.group && dragIndex === index}
+                    isEditMode={isEditMode}
+                    key={account.id}
+                    onDelete={() => removeAccount(account.id)}
+                    onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
+                    onDragMove={(dy) => handleDragMove(groupData.group, dy)}
+                    onDragStart={(y0) => handleDragStart(groupData.group, index, y0)}
+                    shift={getShift(groupData.group, index)}
+                  />
+                ))}
               </View>
-              {groupData.accounts.map((account, index) => (
-                <AccountRow
-                  account={account}
-                  balance={account.balanceCents}
-                  currencySymbol={currencySymbols[account.currencyCode ?? "USD"] ?? account.currencyCode ?? "$"}
-                  isDragging={dragGroup === groupData.group && dragIndex === index}
-                  isEditMode={isEditMode}
-                  key={account.id}
-                  onDelete={() => removeAccount(account.id)}
-                  onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
-                  onDragMove={(dy) => handleDragMove(groupData.group, dy)}
-                  onDragStart={(y0) => handleDragStart(groupData.group, index, y0)}
-                  shift={getShift(groupData.group, index)}
-                />
-              ))}
-            </View>
-          ))}
-        </ScrollView>
+            ))}
+          </ScrollView>
         )}
-      </Animated.View>
+      </View>
 
       {/* Floating drag ghost */}
       {dragGroup !== null && dragIndex !== null && (() => {
@@ -690,6 +656,9 @@ export default function AccountsScreen() {
         );
       })()}
 
+      {/* Tab bar */}
+      <BottomTabBar activeTab="Accounts" />
+
       {/* Create account sheet */}
       <CreateAccountBottomSheet
         groups={accountGroupOrder}
@@ -707,7 +676,7 @@ export default function AccountsScreen() {
         selectedCurrency={currencies.find((c) => c.code === homeCurrencyCode) ?? currencies[0]}
         visible={isCreateOpen}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -715,51 +684,23 @@ export default function AccountsScreen() {
 
 const styles = StyleSheet.create({
   root: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  backdrop: {
-    backgroundColor: figmaColors.base.overlay,
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-  },
-  sheet: {
-    backgroundColor: figmaColors.base.white,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: "90%",
-    paddingHorizontal: 20,
-    paddingTop: 24,
-  },
-  sheetRoot: {
+    backgroundColor: figmaColors.bg,
     flex: 1,
   },
-  sheetContainer: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  innerSheet: {
-    backgroundColor: figmaColors.base.white,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 24,
-  },
-  sheetHeader: {
+  header: {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 16,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 16,
   },
-  sheetTitle: {
+  headerTitle: {
     color: figmaColors.grayNeutral["900"],
     fontFamily: fontFamily.bold,
-    fontSize: 20,
-    letterSpacing: -0.4,
-    lineHeight: 28,
+    fontSize: 28,
+    letterSpacing: -0.5,
+    lineHeight: 34,
   },
   headerActions: {
     alignItems: "center",
@@ -780,6 +721,10 @@ const styles = StyleSheet.create({
   divider: {
     backgroundColor: figmaColors.grayNeutral["200"],
     height: StyleSheet.hairlineWidth,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 20,
   },
   summaryBar: {
     flexDirection: "row",

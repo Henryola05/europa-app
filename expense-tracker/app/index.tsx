@@ -977,6 +977,7 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
               key={tab.label}
               onPress={() => {
                 if (tab.label === "Settings") router.push("/settings");
+                else if (tab.label === "Accounts") router.push("/accounts");
               }}
               style={styles.tabBarItem}
             >
