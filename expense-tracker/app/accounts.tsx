@@ -114,7 +114,32 @@ function groupAccounts(
     .filter((g) => g.accounts.length > 0);
 }
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const LIABILITY_GROUPS: AccountGroup[] = ["Credit Card", "Overdrafts", "Loan", "Insurance"];
+
 // ─── Icons ────────────────────────────────────────────────────────────────────
+
+function PencilIcon() {
+  return (
+    <Svg fill="none" height={20} viewBox="0 0 24 24" width={20}>
+      <Path
+        d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+        stroke={figmaColors.grayNeutral["600"]}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+      />
+      <Path
+        d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+        stroke={figmaColors.grayNeutral["600"]}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+      />
+    </Svg>
+  );
+}
 
 function CloseIcon() {
   return (
@@ -323,6 +348,24 @@ export default function AccountsScreen() {
 
   const groups = groupAccounts(displayAccounts, homeCurrencyCode, exchangeRates);
 
+  const currencySymbol = currencySymbols[homeCurrencyCode] ?? "$";
+
+  const totalAssetsCents = useMemo(
+    () => displayAccounts
+      .filter((a) => !LIABILITY_GROUPS.includes(a.group))
+      .reduce((sum, a) => sum + convertCents(a.balanceCents, a.currencyCode ?? homeCurrencyCode, homeCurrencyCode, exchangeRates), 0),
+    [displayAccounts, homeCurrencyCode, exchangeRates],
+  );
+
+  const totalLiabilitiesCents = useMemo(
+    () => displayAccounts
+      .filter((a) => LIABILITY_GROUPS.includes(a.group))
+      .reduce((sum, a) => sum + convertCents(a.balanceCents, a.currencyCode ?? homeCurrencyCode, homeCurrencyCode, exchangeRates), 0),
+    [displayAccounts, homeCurrencyCode, exchangeRates],
+  );
+
+  const totalNetCents = totalAssetsCents + totalLiabilitiesCents;
+
   const [dragGroup, setDragGroup] = useState<AccountGroup | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [snapGroup, setSnapGroup] = useState<AccountGroup | null>(null);
@@ -481,6 +524,13 @@ export default function AccountsScreen() {
           <Text style={styles.sheetTitle}>Accounts</Text>
           <View style={styles.headerActions}>
             <Pressable
+              accessibilityLabel="Edit accounts"
+              accessibilityRole="button"
+              style={styles.headerButton}
+            >
+              <PencilIcon />
+            </Pressable>
+            <Pressable
               accessibilityLabel="Add new account"
               accessibilityRole="button"
               onPress={() => setIsCreateOpen(true)}
@@ -488,14 +538,26 @@ export default function AccountsScreen() {
             >
               <PlusIcon />
             </Pressable>
-            <Pressable
-              accessibilityLabel="Close"
-              accessibilityRole="button"
-              onPress={closeSheet}
-              style={styles.headerButton}
-            >
-              <CloseIcon />
-            </Pressable>
+          </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* Summary bar */}
+        <View style={styles.summaryBar}>
+          <View style={styles.summaryItem}>
+            <Text style={[styles.summaryLabel, { color: figmaColors.success["500"] }]}>Assets</Text>
+            <Text style={styles.summaryAmount}>{formatBalance(totalAssetsCents, currencySymbol)}</Text>
+          </View>
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryItem}>
+            <Text style={[styles.summaryLabel, { color: figmaColors.error["500"] }]}>Liabilities</Text>
+            <Text style={styles.summaryAmount}>{formatBalance(Math.abs(totalLiabilitiesCents), currencySymbol)}</Text>
+          </View>
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryLabel}>Total</Text>
+            <Text style={styles.summaryAmount}>{formatBalance(totalNetCents, currencySymbol)}</Text>
           </View>
         </View>
 
@@ -642,7 +704,7 @@ const styles = StyleSheet.create({
     backgroundColor: figmaColors.base.white,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    maxHeight: "75%",
+    maxHeight: "90%",
     paddingHorizontal: 20,
     paddingTop: 24,
   },
@@ -689,10 +751,37 @@ const styles = StyleSheet.create({
   divider: {
     backgroundColor: figmaColors.grayNeutral["200"],
     height: StyleSheet.hairlineWidth,
-    marginBottom: 16,
+  },
+  summaryBar: {
+    flexDirection: "row",
+    paddingVertical: 16,
+  },
+  summaryItem: {
+    alignItems: "center",
+    flex: 1,
+    gap: 4,
+  },
+  summaryDivider: {
+    backgroundColor: figmaColors.grayNeutral["200"],
+    width: StyleSheet.hairlineWidth,
+  },
+  summaryLabel: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.medium,
+    fontSize: 13,
+    letterSpacing: -0.1,
+    lineHeight: 18,
+  },
+  summaryAmount: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 16,
+    letterSpacing: -0.2,
+    lineHeight: 22,
   },
   listContent: {
     paddingBottom: 8,
+    paddingTop: 8,
   },
   groupHeader: {
     alignItems: "center",
