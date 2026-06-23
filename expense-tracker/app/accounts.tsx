@@ -120,19 +120,20 @@ const LIABILITY_GROUPS: AccountGroup[] = ["Credit Card", "Overdrafts", "Loan", "
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
-function PencilIcon() {
+function PencilIcon({ active = false }: { active?: boolean }) {
+  const stroke = active ? figmaColors.blue["500"] : figmaColors.grayNeutral["600"];
   return (
     <Svg fill="none" height={20} viewBox="0 0 24 24" width={20}>
       <Path
         d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-        stroke={figmaColors.grayNeutral["600"]}
+        stroke={stroke}
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={2}
       />
       <Path
         d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
-        stroke={figmaColors.grayNeutral["600"]}
+        stroke={stroke}
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={2}
@@ -177,6 +178,16 @@ function MinusCircleIcon() {
   );
 }
 
+function DotsVerticalIcon() {
+  return (
+    <Svg fill="none" height={20} viewBox="0 0 24 24" width={20}>
+      <Circle cx={12} cy={5} fill={figmaColors.grayNeutral["400"]} r={1.5} />
+      <Circle cx={12} cy={12} fill={figmaColors.grayNeutral["400"]} r={1.5} />
+      <Circle cx={12} cy={19} fill={figmaColors.grayNeutral["400"]} r={1.5} />
+    </Svg>
+  );
+}
+
 function DragHandleIcon() {
   const fill = figmaColors.grayNeutral["400"];
   return (
@@ -198,6 +209,7 @@ function AccountRow({
   balance,
   currencySymbol,
   isDragging,
+  isEditMode,
   onDelete,
   onDragEnd,
   onDragMove,
@@ -208,6 +220,7 @@ function AccountRow({
   balance: number;
   currencySymbol: string;
   isDragging: boolean;
+  isEditMode: boolean;
   onDelete: () => void;
   onDragEnd: (dy: number) => void;
   onDragMove: (dy: number) => void;
@@ -264,25 +277,33 @@ function AccountRow({
         { transform: [{ translateY }], zIndex: isDragging ? 10 : 0, opacity: isDragging ? 0 : 1 },
       ]}
     >
-      <Pressable accessibilityLabel={`Delete ${account.name}`} accessibilityRole="button" hitSlop={8} onPress={onDelete}>
-        <MinusCircleIcon />
-      </Pressable>
+      {isEditMode && (
+        <Pressable accessibilityLabel={`Delete ${account.name}`} accessibilityRole="button" hitSlop={8} onPress={onDelete}>
+          <MinusCircleIcon />
+        </Pressable>
+      )}
       <View style={styles.accountNameArea}>
         <Text style={styles.accountName}>{account.name}</Text>
       </View>
       <Text style={[
         styles.accountBalance,
-        balance > 0
-          ? { color: figmaColors.grayNeutral["900"] }
-          : balance < 0
-            ? { color: figmaColors.error["600"] }
-            : undefined,
+        isEditMode
+          ? (balance > 0
+              ? { color: figmaColors.grayNeutral["900"] }
+              : balance < 0
+                ? { color: figmaColors.error["600"] }
+                : undefined)
+          : { color: figmaColors.grayNeutral["400"] },
       ]}>
         {formatBalance(balance, currencySymbol)}
       </Text>
-      <View {...panResponder.panHandlers}>
-        <DragHandleIcon />
-      </View>
+      {isEditMode ? (
+        <View {...panResponder.panHandlers}>
+          <DragHandleIcon />
+        </View>
+      ) : (
+        <DotsVerticalIcon />
+      )}
     </Animated.View>
   );
 }
@@ -389,6 +410,7 @@ export default function AccountsScreen() {
   const floatTranslateY = useRef(Animated.add(floatTopAnim, floatDyAnim)).current;
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
 
   // Sheet open animation
   const backdropOpacity = useRef(new Animated.Value(0)).current;
@@ -524,11 +546,12 @@ export default function AccountsScreen() {
           <Text style={styles.sheetTitle}>Accounts</Text>
           <View style={styles.headerActions}>
             <Pressable
-              accessibilityLabel="Edit accounts"
+              accessibilityLabel={isEditMode ? "Done editing" : "Edit accounts"}
               accessibilityRole="button"
-              style={styles.headerButton}
+              onPress={() => setIsEditMode((v) => !v)}
+              style={[styles.headerButton, isEditMode && styles.headerButtonActive]}
             >
-              <PencilIcon />
+              <PencilIcon active={isEditMode} />
             </Pressable>
             <Pressable
               accessibilityLabel="Add new account"
@@ -611,6 +634,7 @@ export default function AccountsScreen() {
                   balance={account.balanceCents}
                   currencySymbol={currencySymbols[account.currencyCode ?? "USD"] ?? account.currencyCode ?? "$"}
                   isDragging={dragGroup === groupData.group && dragIndex === index}
+                  isEditMode={isEditMode}
                   key={account.id}
                   onDelete={() => removeAccount(account.id)}
                   onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
@@ -645,21 +669,23 @@ export default function AccountsScreen() {
               },
             ]}
           >
-            <MinusCircleIcon />
+            {isEditMode && <MinusCircleIcon />}
             <View style={styles.accountNameArea}>
               <Text style={styles.accountName}>{account.name}</Text>
             </View>
             <Text style={[
               styles.accountBalance,
-              account.balanceCents > 0
-                ? { color: figmaColors.grayNeutral["900"] }
-                : account.balanceCents < 0
-                  ? { color: figmaColors.error["600"] }
-                  : undefined,
+              isEditMode
+                ? (account.balanceCents > 0
+                    ? { color: figmaColors.grayNeutral["900"] }
+                    : account.balanceCents < 0
+                      ? { color: figmaColors.error["600"] }
+                      : undefined)
+                : { color: figmaColors.grayNeutral["400"] },
             ]}>
               {formatBalance(account.balanceCents, currencySymbols[account.currencyCode ?? "USD"] ?? account.currencyCode ?? "$")}
             </Text>
-            <DragHandleIcon />
+            {isEditMode ? <DragHandleIcon /> : <DotsVerticalIcon />}
           </Animated.View>
         );
       })()}
@@ -747,6 +773,9 @@ const styles = StyleSheet.create({
     height: 36,
     justifyContent: "center",
     width: 36,
+  },
+  headerButtonActive: {
+    backgroundColor: figmaColors.blue["50"],
   },
   divider: {
     backgroundColor: figmaColors.grayNeutral["200"],
