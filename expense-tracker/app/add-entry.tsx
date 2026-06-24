@@ -2804,7 +2804,8 @@ function AmountInputSheet({
         Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
       ]).start();
     }
-  }, [amountCents, backdropOpacity, translateY, visible]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   const closeWithAnimation = useCallback(() => {
     Animated.parallel([
