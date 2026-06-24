@@ -815,10 +815,11 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     alignItems: "center",
+    flex: 1,
     gap: 8,
-    paddingBottom: 32,
-    paddingHorizontal: 24,
-    paddingTop: 40,
+    justifyContent: "center",
+    paddingHorizontal: 4,
+    paddingBottom: 40,
   },
   emptyTitle: {
     color: figmaColors.grayNeutral["900"],
