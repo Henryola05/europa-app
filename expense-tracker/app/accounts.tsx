@@ -115,22 +115,44 @@ function groupAccounts(
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatBalanceAbbr(cents: number, symbol = "$"): string {
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  if (abs >= 100_000_000) return `${sign}${symbol}${(abs / 100_000_000).toFixed(1)}M`;
+  if (abs >= 100_000) return `${sign}${symbol}${(abs / 100_000).toFixed(1)}k`;
+  return formatBalance(cents, symbol);
+}
+
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
-function PencilIcon({ active = false }: { active?: boolean }) {
-  const stroke = active ? figmaColors.blue["500"] : figmaColors.grayNeutral["600"];
+function XIcon() {
+  return (
+    <Svg fill="none" height={18} viewBox="0 0 24 24" width={18}>
+      <Path
+        clipRule="evenodd"
+        d="M6.225 4.811a1 1 0 0 0-1.414 1.414L10.586 12l-5.775 5.775a1 1 0 1 0 1.414 1.414L12 13.414l5.775 5.775a1 1 0 0 0 1.414-1.414L13.414 12l5.775-5.775a1 1 0 0 0-1.414-1.414L12 10.586 6.225 4.811Z"
+        fill={figmaColors.grayNeutral["700"]}
+        fillRule="evenodd"
+      />
+    </Svg>
+  );
+}
+
+function PencilIcon() {
   return (
     <Svg fill="none" height={20} viewBox="0 0 24 24" width={20}>
       <Path
         d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-        stroke={stroke}
+        stroke={figmaColors.grayNeutral["600"]}
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={2}
       />
       <Path
         d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
-        stroke={stroke}
+        stroke={figmaColors.grayNeutral["600"]}
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={2}
@@ -162,12 +184,15 @@ function MinusCircleIcon() {
   );
 }
 
-function DotsVerticalIcon() {
+function EyeIcon() {
   return (
-    <Svg fill="none" height={20} viewBox="0 0 24 24" width={20}>
-      <Circle cx={12} cy={5} fill={figmaColors.grayNeutral["400"]} r={1.5} />
-      <Circle cx={12} cy={12} fill={figmaColors.grayNeutral["400"]} r={1.5} />
-      <Circle cx={12} cy={19} fill={figmaColors.grayNeutral["400"]} r={1.5} />
+    <Svg fill="none" height={20} viewBox="0 0 20 20" width={20}>
+      <Path
+        clipRule="evenodd"
+        d="M3.33366 10.0012C3.33616 9.98783 3.34783 9.91449 3.41283 9.77033C3.48449 9.61116 3.60033 9.41116 3.76616 9.18033C4.09783 8.71949 4.59366 8.18699 5.22033 7.68199C6.48116 6.66366 8.17699 5.83366 10.0003 5.83366C11.8237 5.83366 13.5195 6.66366 14.7803 7.68033C15.407 8.18533 15.9028 8.71783 16.2345 9.17866C16.4012 9.40949 16.5162 9.60949 16.5878 9.76866C16.6528 9.91283 16.6645 9.98616 16.667 9.99949V10.0003C16.6645 10.0137 16.6528 10.087 16.5878 10.2312C16.4895 10.4388 16.3711 10.6364 16.2345 10.8212C15.9028 11.282 15.407 11.8145 14.7803 12.3195C13.5203 13.337 11.8245 14.167 10.0003 14.167C8.17699 14.167 6.48116 13.337 5.22033 12.3203C4.59366 11.8153 4.09783 11.2828 3.76616 10.822C3.62941 10.6373 3.51107 10.4397 3.41283 10.232C3.3764 10.1589 3.34978 10.0812 3.33366 10.0012ZM10.0003 4.16699C7.68116 4.16699 5.62699 5.21199 4.17449 6.38283C3.44366 6.97116 2.84116 7.61116 2.41366 8.20533C2.21122 8.48032 2.03675 8.77484 1.89283 9.08449C1.76949 9.35866 1.66699 9.67616 1.66699 10.0003C1.66699 10.3237 1.76949 10.6428 1.89199 10.9162C2.02116 11.2012 2.20033 11.4995 2.41366 11.7953C2.84116 12.3895 3.44366 13.0287 4.17449 13.6178C5.62699 14.7887 7.68116 15.8337 10.0003 15.8337C12.3195 15.8337 14.3737 14.7887 15.8262 13.6178C16.557 13.0295 17.1595 12.3895 17.587 11.7953C17.8012 11.4987 17.9795 11.2012 18.1078 10.9162C18.2312 10.6428 18.3337 10.3245 18.3337 10.0003C18.3337 9.67699 18.2312 9.35783 18.1087 9.08449C17.9643 8.7749 17.7895 8.48041 17.587 8.20533C17.1595 7.61116 16.557 6.97199 15.8262 6.38283C14.3737 5.21199 12.3195 4.16699 10.0003 4.16699ZM9.16699 10.0003C9.16699 9.77931 9.25479 9.56735 9.41107 9.41107C9.56735 9.25479 9.77931 9.16699 10.0003 9.16699C10.2213 9.16699 10.4333 9.25479 10.5896 9.41107C10.7459 9.56735 10.8337 9.77931 10.8337 10.0003C10.8337 10.2213 10.7459 10.4333 10.5896 10.5896C10.4333 10.7459 10.2213 10.8337 10.0003 10.8337C9.77931 10.8337 9.56735 10.7459 9.41107 10.5896C9.25479 10.4333 9.16699 10.2213 9.16699 10.0003ZM10.0003 7.50033C9.33728 7.50033 8.7014 7.76372 8.23256 8.23256C7.76372 8.7014 7.50033 9.33728 7.50033 10.0003C7.50033 10.6634 7.76372 11.2993 8.23256 11.7681C8.7014 12.2369 9.33728 12.5003 10.0003 12.5003C10.6634 12.5003 11.2993 12.2369 11.7681 11.7681C12.2369 11.2993 12.5003 10.6634 12.5003 10.0003C12.5003 9.33728 12.2369 8.7014 11.7681 8.23256C11.2993 7.76372 10.6634 7.50033 10.0003 7.50033Z"
+        fill={figmaColors.grayNeutral["400"]}
+        fillRule="evenodd"
+      />
     </Svg>
   );
 }
@@ -176,12 +201,12 @@ function DragHandleIcon() {
   const fill = figmaColors.grayNeutral["400"];
   return (
     <Svg fill="none" height={20} viewBox="0 0 20 20" width={20}>
-      <Circle cx={7} cy={5} fill={fill} r={1.5} />
-      <Circle cx={13} cy={5} fill={fill} r={1.5} />
-      <Circle cx={7} cy={10} fill={fill} r={1.5} />
-      <Circle cx={13} cy={10} fill={fill} r={1.5} />
-      <Circle cx={7} cy={15} fill={fill} r={1.5} />
-      <Circle cx={13} cy={15} fill={fill} r={1.5} />
+      <Circle cx={5} cy={7} fill={fill} r={1.5} />
+      <Circle cx={10} cy={7} fill={fill} r={1.5} />
+      <Circle cx={15} cy={7} fill={fill} r={1.5} />
+      <Circle cx={5} cy={13} fill={fill} r={1.5} />
+      <Circle cx={10} cy={13} fill={fill} r={1.5} />
+      <Circle cx={15} cy={13} fill={fill} r={1.5} />
     </Svg>
   );
 }
@@ -282,9 +307,12 @@ function AccountRow({
         {formatBalance(balance, currencySymbol)}
       </Text>
       {isEditMode && (
-        <View {...panResponder.panHandlers}>
-          <DragHandleIcon />
-        </View>
+        <>
+          <EyeIcon />
+          <View {...panResponder.panHandlers}>
+            <DragHandleIcon />
+          </View>
+        </>
       )}
     </Animated.View>
   );
@@ -484,17 +512,17 @@ export default function AccountsScreen() {
   return (
     <SafeAreaView edges={["top"]} style={styles.root}>
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Accounts</Text>
-        <View style={styles.headerActions}>
+      {isEditMode ? (
+        <View style={styles.headerEdit}>
           <Pressable
-            accessibilityLabel={isEditMode ? "Done editing" : "Edit accounts"}
+            accessibilityLabel="Done editing"
             accessibilityRole="button"
-            onPress={() => setIsEditMode((v) => !v)}
-            style={[styles.headerButton, isEditMode && styles.headerButtonActive]}
+            onPress={() => setIsEditMode(false)}
+            style={styles.headerButton}
           >
-            <PencilIcon active={isEditMode} />
+            <XIcon />
           </Pressable>
+          <Text style={styles.headerTitleCentered}>Accounts</Text>
           <Pressable
             accessibilityLabel="Add new account"
             accessibilityRole="button"
@@ -504,25 +532,47 @@ export default function AccountsScreen() {
             <PlusIcon />
           </Pressable>
         </View>
-      </View>
+      ) : (
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Accounts</Text>
+          <View style={styles.headerActions}>
+            <Pressable
+              accessibilityLabel="Edit accounts"
+              accessibilityRole="button"
+              onPress={() => setIsEditMode(true)}
+              style={styles.headerButton}
+            >
+              <PencilIcon />
+            </Pressable>
+            <Pressable
+              accessibilityLabel="Add new account"
+              accessibilityRole="button"
+              onPress={() => setIsCreateOpen(true)}
+              style={styles.headerButton}
+            >
+              <PlusIcon />
+            </Pressable>
+          </View>
+        </View>
+      )}
 
       <View style={styles.divider} />
 
       {/* Summary bar */}
       <View style={styles.summaryBar}>
         <View style={styles.summaryItem}>
-          <Text style={[styles.summaryLabel, { color: figmaColors.success["500"] }]}>Assets</Text>
-          <Text style={styles.summaryAmount}>{formatBalance(totalAssetsCents, currencySymbol)}</Text>
+          <Text style={styles.summaryLabel}>Assets</Text>
+          <Text style={[styles.summaryAmount, { color: figmaColors.success["700"] }]}>{formatBalanceAbbr(totalAssetsCents, currencySymbol)}</Text>
         </View>
         <View style={styles.summaryDivider} />
         <View style={styles.summaryItem}>
-          <Text style={[styles.summaryLabel, { color: figmaColors.error["500"] }]}>Liabilities</Text>
-          <Text style={styles.summaryAmount}>{formatBalance(Math.abs(totalLiabilitiesCents), currencySymbol)}</Text>
+          <Text style={styles.summaryLabel}>Liabilities</Text>
+          <Text style={[styles.summaryAmount, { color: figmaColors.error["700"] }]}>{formatBalanceAbbr(Math.abs(totalLiabilitiesCents), currencySymbol)}</Text>
         </View>
         <View style={styles.summaryDivider} />
         <View style={styles.summaryItem}>
           <Text style={styles.summaryLabel}>Total</Text>
-          <Text style={styles.summaryAmount}>{formatBalance(totalNetCents, currencySymbol)}</Text>
+          <Text style={styles.summaryAmount}>{formatBalanceAbbr(totalNetCents, currencySymbol)}</Text>
         </View>
       </View>
 
@@ -673,12 +723,29 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 16,
   },
+  headerEdit: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 16,
+  },
   headerTitle: {
     color: figmaColors.grayNeutral["900"],
     fontFamily: fontFamily.bold,
     fontSize: 28,
     letterSpacing: -0.5,
     lineHeight: 34,
+  },
+  headerTitleCentered: {
+    color: figmaColors.grayNeutral["900"],
+    flex: 1,
+    fontFamily: fontFamily.bold,
+    fontSize: 20,
+    letterSpacing: -0.3,
+    lineHeight: 26,
+    textAlign: "center",
   },
   headerActions: {
     alignItems: "center",
@@ -692,9 +759,6 @@ const styles = StyleSheet.create({
     height: 36,
     justifyContent: "center",
     width: 36,
-  },
-  headerButtonActive: {
-    backgroundColor: figmaColors.blue["50"],
   },
   divider: {
     backgroundColor: figmaColors.grayNeutral["200"],
@@ -714,11 +778,11 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   summaryDivider: {
-    backgroundColor: figmaColors.grayNeutral["200"],
+    backgroundColor: figmaColors.grayNeutral["300"],
     width: StyleSheet.hairlineWidth,
   },
   summaryLabel: {
-    color: figmaColors.grayNeutral["900"],
+    color: figmaColors.grayNeutral["500"],
     fontFamily: fontFamily.medium,
     fontSize: 13,
     letterSpacing: -0.1,
