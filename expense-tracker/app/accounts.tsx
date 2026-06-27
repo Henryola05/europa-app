@@ -184,13 +184,14 @@ function MinusCircleIcon() {
   );
 }
 
-function EyeIcon() {
+function EyeIcon({ hidden = false }: { hidden?: boolean }) {
+  const fill = hidden ? figmaColors.grayNeutral["300"] : figmaColors.grayNeutral["400"];
   return (
     <Svg fill="none" height={20} viewBox="0 0 20 20" width={20}>
       <Path
         clipRule="evenodd"
         d="M3.33366 10.0012C3.33616 9.98783 3.34783 9.91449 3.41283 9.77033C3.48449 9.61116 3.60033 9.41116 3.76616 9.18033C4.09783 8.71949 4.59366 8.18699 5.22033 7.68199C6.48116 6.66366 8.17699 5.83366 10.0003 5.83366C11.8237 5.83366 13.5195 6.66366 14.7803 7.68033C15.407 8.18533 15.9028 8.71783 16.2345 9.17866C16.4012 9.40949 16.5162 9.60949 16.5878 9.76866C16.6528 9.91283 16.6645 9.98616 16.667 9.99949V10.0003C16.6645 10.0137 16.6528 10.087 16.5878 10.2312C16.4895 10.4388 16.3711 10.6364 16.2345 10.8212C15.9028 11.282 15.407 11.8145 14.7803 12.3195C13.5203 13.337 11.8245 14.167 10.0003 14.167C8.17699 14.167 6.48116 13.337 5.22033 12.3203C4.59366 11.8153 4.09783 11.2828 3.76616 10.822C3.62941 10.6373 3.51107 10.4397 3.41283 10.232C3.3764 10.1589 3.34978 10.0812 3.33366 10.0012ZM10.0003 4.16699C7.68116 4.16699 5.62699 5.21199 4.17449 6.38283C3.44366 6.97116 2.84116 7.61116 2.41366 8.20533C2.21122 8.48032 2.03675 8.77484 1.89283 9.08449C1.76949 9.35866 1.66699 9.67616 1.66699 10.0003C1.66699 10.3237 1.76949 10.6428 1.89199 10.9162C2.02116 11.2012 2.20033 11.4995 2.41366 11.7953C2.84116 12.3895 3.44366 13.0287 4.17449 13.6178C5.62699 14.7887 7.68116 15.8337 10.0003 15.8337C12.3195 15.8337 14.3737 14.7887 15.8262 13.6178C16.557 13.0295 17.1595 12.3895 17.587 11.7953C17.8012 11.4987 17.9795 11.2012 18.1078 10.9162C18.2312 10.6428 18.3337 10.3245 18.3337 10.0003C18.3337 9.67699 18.2312 9.35783 18.1087 9.08449C17.9643 8.7749 17.7895 8.48041 17.587 8.20533C17.1595 7.61116 16.557 6.97199 15.8262 6.38283C14.3737 5.21199 12.3195 4.16699 10.0003 4.16699ZM9.16699 10.0003C9.16699 9.77931 9.25479 9.56735 9.41107 9.41107C9.56735 9.25479 9.77931 9.16699 10.0003 9.16699C10.2213 9.16699 10.4333 9.25479 10.5896 9.41107C10.7459 9.56735 10.8337 9.77931 10.8337 10.0003C10.8337 10.2213 10.7459 10.4333 10.5896 10.5896C10.4333 10.7459 10.2213 10.8337 10.0003 10.8337C9.77931 10.8337 9.56735 10.7459 9.41107 10.5896C9.25479 10.4333 9.16699 10.2213 9.16699 10.0003ZM10.0003 7.50033C9.33728 7.50033 8.7014 7.76372 8.23256 8.23256C7.76372 8.7014 7.50033 9.33728 7.50033 10.0003C7.50033 10.6634 7.76372 11.2993 8.23256 11.7681C8.7014 12.2369 9.33728 12.5003 10.0003 12.5003C10.6634 12.5003 11.2993 12.2369 11.7681 11.7681C12.2369 11.2993 12.5003 10.6634 12.5003 10.0003C12.5003 9.33728 12.2369 8.7014 11.7681 8.23256C11.2993 7.76372 10.6634 7.50033 10.0003 7.50033Z"
-        fill={figmaColors.grayNeutral["400"]}
+        fill={fill}
         fillRule="evenodd"
       />
     </Svg>
@@ -219,10 +220,12 @@ function AccountRow({
   currencySymbol,
   isDragging,
   isEditMode,
+  isHidden,
   onDelete,
   onDragEnd,
   onDragMove,
   onDragStart,
+  onToggleHidden,
   shift,
 }: {
   account: StoredAccount;
@@ -230,10 +233,12 @@ function AccountRow({
   currencySymbol: string;
   isDragging: boolean;
   isEditMode: boolean;
+  isHidden: boolean;
   onDelete: () => void;
   onDragEnd: (dy: number) => void;
   onDragMove: (dy: number) => void;
   onDragStart: (y0: number) => void;
+  onToggleHidden: () => void;
   shift: number;
 }) {
   const shiftAnim = useRef(new Animated.Value(0)).current;
@@ -283,7 +288,7 @@ function AccountRow({
       style={[
         styles.accountRow,
         isDragging && styles.accountRowDragging,
-        { transform: [{ translateY }], zIndex: isDragging ? 10 : 0, opacity: isDragging ? 0 : 1 },
+        { transform: [{ translateY }], zIndex: isDragging ? 10 : 0, opacity: isDragging ? 0 : isHidden ? 0.35 : 1 },
       ]}
     >
       {isEditMode && (
@@ -308,7 +313,9 @@ function AccountRow({
       </Text>
       {isEditMode && (
         <>
-          <EyeIcon />
+          <Pressable accessibilityLabel={isHidden ? `Show ${account.name}` : `Hide ${account.name}`} accessibilityRole="button" hitSlop={8} onPress={onToggleHidden}>
+            <EyeIcon hidden={isHidden} />
+          </Pressable>
           <View {...panResponder.panHandlers}>
             <DragHandleIcon />
           </View>
@@ -378,16 +385,26 @@ export default function AccountsScreen() {
 
   const currencySymbol = currencySymbols[homeCurrencyCode] ?? "$";
 
+  const [hiddenAccountIds, setHiddenAccountIds] = useState<Set<string>>(new Set());
+  const toggleHidden = useCallback((id: string) => {
+    setHiddenAccountIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
   const { totalAssetsCents, totalLiabilitiesCents } = useMemo(() => {
     let assets = 0;
     let liabilities = 0;
     for (const a of displayAccounts) {
+      if (hiddenAccountIds.has(a.id)) continue;
       const converted = convertCents(a.balanceCents, a.currencyCode ?? homeCurrencyCode, homeCurrencyCode, exchangeRates);
       if (converted >= 0) assets += converted;
       else liabilities += converted;
     }
     return { totalAssetsCents: assets, totalLiabilitiesCents: liabilities };
-  }, [displayAccounts, homeCurrencyCode, exchangeRates]);
+  }, [displayAccounts, hiddenAccountIds, homeCurrencyCode, exchangeRates]);
 
   const totalNetCents = totalAssetsCents + totalLiabilitiesCents;
 
@@ -601,7 +618,12 @@ export default function AccountsScreen() {
             scrollEnabled={dragIndex === null}
             showsVerticalScrollIndicator={false}
           >
-            {groups.map((groupData) => (
+            {groups.map((groupData) => {
+              const visibleAccounts = isEditMode
+                ? groupData.accounts
+                : groupData.accounts.filter((a) => !hiddenAccountIds.has(a.id));
+              if (visibleAccounts.length === 0) return null;
+              return (
               <View
                 key={groupData.group}
                 onLayout={(e) => { groupYRef.current[groupData.group] = e.nativeEvent.layout.y; }}
@@ -622,23 +644,26 @@ export default function AccountsScreen() {
                     {formatBalance(groupData.totalCents, currencySymbols[homeCurrencyCode] ?? homeCurrencyCode)}
                   </Text>
                 </View>
-                {groupData.accounts.map((account, index) => (
+                {visibleAccounts.map((account, index) => (
                   <AccountRow
                     account={account}
                     balance={account.balanceCents}
                     currencySymbol={currencySymbols[account.currencyCode ?? "USD"] ?? account.currencyCode ?? "$"}
                     isDragging={dragGroup === groupData.group && dragIndex === index}
                     isEditMode={isEditMode}
+                    isHidden={hiddenAccountIds.has(account.id)}
                     key={account.id}
                     onDelete={() => removeAccount(account.id)}
                     onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
                     onDragMove={(dy) => handleDragMove(groupData.group, dy)}
                     onDragStart={(y0) => handleDragStart(groupData.group, index, y0)}
+                    onToggleHidden={() => toggleHidden(account.id)}
                     shift={getShift(groupData.group, index)}
                   />
                 ))}
               </View>
-            ))}
+              );
+            })}
           </ScrollView>
         )}
       </View>
