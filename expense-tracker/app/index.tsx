@@ -2520,6 +2520,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     flexDirection: "row",
     gap: 8,
+    justifyContent: "center",
     marginTop: 10,
     padding: 14,
   },
