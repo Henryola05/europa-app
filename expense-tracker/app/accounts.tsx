@@ -352,10 +352,12 @@ function AccountsEmptyIcon() {
 export default function AccountsScreen() {
   const {
     accounts: storeAccounts,
+    hiddenAccountIds: hiddenAccountIdsArray,
     addAccount,
     removeAccount,
     reorderInGroup,
     moveToGroup,
+    toggleHiddenAccount,
   } = useAccountsStore();
 
   const [allTransactions, setAllTransactions] = useState<StoredTransaction[]>([]);
@@ -385,14 +387,7 @@ export default function AccountsScreen() {
 
   const currencySymbol = currencySymbols[homeCurrencyCode] ?? "$";
 
-  const [hiddenAccountIds, setHiddenAccountIds] = useState<Set<string>>(new Set());
-  const toggleHidden = useCallback((id: string) => {
-    setHiddenAccountIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }, []);
+  const hiddenAccountIds = useMemo(() => new Set(hiddenAccountIdsArray), [hiddenAccountIdsArray]);
 
   const { totalAssetsCents, totalLiabilitiesCents } = useMemo(() => {
     let assets = 0;
@@ -657,7 +652,7 @@ export default function AccountsScreen() {
                     onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
                     onDragMove={(dy) => handleDragMove(groupData.group, dy)}
                     onDragStart={(y0) => handleDragStart(groupData.group, index, y0)}
-                    onToggleHidden={() => toggleHidden(account.id)}
+                    onToggleHidden={() => toggleHiddenAccount(account.id)}
                     shift={getShift(groupData.group, index)}
                   />
                 ))}

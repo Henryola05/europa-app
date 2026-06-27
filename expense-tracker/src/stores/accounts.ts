@@ -41,23 +41,36 @@ export const accountGroupOrder: AccountGroup[] = [
 
 type AccountsState = {
   accounts: StoredAccount[];
+  hiddenAccountIds: string[];
   addAccount: (account: StoredAccount) => void;
   removeAccount: (id: string) => void;
   reorderInGroup: (group: AccountGroup, orderedIds: string[]) => void;
   moveToGroup: (accountId: string, toGroup: AccountGroup, atIndex: number) => void;
   setOpeningBalance: (id: string, openingBalanceCents: number) => void;
+  toggleHiddenAccount: (id: string) => void;
 };
 
 export const useAccountsStore = create<AccountsState>()(
   persist(
     (set) => ({
       accounts: [],
+      hiddenAccountIds: [],
 
       addAccount: (account) =>
         set((s) => ({ accounts: [...s.accounts, account] })),
 
       removeAccount: (id) =>
-        set((s) => ({ accounts: s.accounts.filter((a) => a.id !== id) })),
+        set((s) => ({
+          accounts: s.accounts.filter((a) => a.id !== id),
+          hiddenAccountIds: s.hiddenAccountIds.filter((hid) => hid !== id),
+        })),
+
+      toggleHiddenAccount: (id) =>
+        set((s) => ({
+          hiddenAccountIds: s.hiddenAccountIds.includes(id)
+            ? s.hiddenAccountIds.filter((hid) => hid !== id)
+            : [...s.hiddenAccountIds, id],
+        })),
 
       reorderInGroup: (group, orderedIds) =>
         set((s) => {

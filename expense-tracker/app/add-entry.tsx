@@ -3242,12 +3242,14 @@ export default function AddEntryScreen() {
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
   const {
     accounts: storeAccounts,
+    hiddenAccountIds: hiddenAccountIdsArray,
     addAccount: storeAddAccount,
     removeAccount: storeRemoveAccount,
     reorderInGroup,
     moveToGroup,
     setOpeningBalance,
   } = useAccountsStore();
+  const hiddenAccountIdSet = useMemo(() => new Set(hiddenAccountIdsArray), [hiddenAccountIdsArray]);
   const localAccounts: Account[] = storeAccounts.map((a) => ({ ...a, balanceCents: a.openingBalanceCents }));
   const [allTransactions, setAllTransactions] = useState<StoredTransaction[]>([]);
   const [editBalanceAccountId, setEditBalanceAccountId] = useState<string | null>(null);
@@ -3687,7 +3689,7 @@ export default function AddEntryScreen() {
       />
 
       <AccountPickerSheet
-        accounts={displayAccounts}
+        accounts={displayAccounts.filter((a) => !hiddenAccountIdSet.has(a.id))}
         onClose={() => setIsAccountPickerOpen(false)}
         onEditAccounts={() => {
           setIsAccountPickerOpen(false);
@@ -3709,7 +3711,7 @@ export default function AddEntryScreen() {
 
       <AccountPickerSheet
         accounts={displayAccounts.filter(
-          (account) => account.id !== selectedAccount?.id,
+          (account) => !hiddenAccountIdSet.has(account.id) && account.id !== selectedAccount?.id,
         )}
         onClose={() => setIsDestinationAccountPickerOpen(false)}
         onEditAccounts={() => {
