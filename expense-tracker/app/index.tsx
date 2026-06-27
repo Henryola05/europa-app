@@ -2515,17 +2515,15 @@ const styles = StyleSheet.create({
   },
   currencyPill: {
     alignItems: "center",
-    alignSelf: "stretch",
+    alignSelf: "center",
     backgroundColor: figmaColors.grayNeutral["200"],
     borderRadius: 12,
     flexDirection: "row",
     gap: 8,
-    justifyContent: "center",
     marginTop: 10,
     padding: 14,
   },
   currencyPillSelected: {
-    alignSelf: "stretch",
     backgroundColor: figmaColors.blue["50"],
   },
   selectedFlag: {
