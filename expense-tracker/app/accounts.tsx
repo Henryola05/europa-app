@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -225,6 +225,7 @@ function AccountRow({
   onDragEnd,
   onDragMove,
   onDragStart,
+  onPress,
   onToggleHidden,
   shift,
 }: {
@@ -238,6 +239,7 @@ function AccountRow({
   onDragEnd: (dy: number) => void;
   onDragMove: (dy: number) => void;
   onDragStart: (y0: number) => void;
+  onPress: () => void;
   onToggleHidden: () => void;
   shift: number;
 }) {
@@ -296,21 +298,28 @@ function AccountRow({
           <MinusCircleIcon />
         </Pressable>
       )}
-      <View style={styles.accountNameArea}>
-        <Text style={styles.accountName}>{account.name}</Text>
-      </View>
-      <Text style={[
-        styles.accountBalance,
-        isEditMode
-          ? (balance > 0
-              ? { color: figmaColors.grayNeutral["900"] }
-              : balance < 0
-                ? { color: figmaColors.error["600"] }
-                : undefined)
-          : { color: figmaColors.grayNeutral["400"] },
-      ]}>
-        {formatBalance(balance, currencySymbol)}
-      </Text>
+      <Pressable
+        accessibilityRole="button"
+        disabled={isEditMode}
+        onPress={onPress}
+        style={styles.accountRowPressable}
+      >
+        <View style={styles.accountNameArea}>
+          <Text style={styles.accountName}>{account.name}</Text>
+        </View>
+        <Text style={[
+          styles.accountBalance,
+          isEditMode
+            ? (balance > 0
+                ? { color: figmaColors.grayNeutral["900"] }
+                : balance < 0
+                  ? { color: figmaColors.error["600"] }
+                  : undefined)
+            : { color: figmaColors.grayNeutral["400"] },
+        ]}>
+          {formatBalance(balance, currencySymbol)}
+        </Text>
+      </Pressable>
       {isEditMode && (
         <>
           <Pressable accessibilityLabel={isHidden ? `Show ${account.name}` : `Hide ${account.name}`} accessibilityRole="button" hitSlop={8} onPress={onToggleHidden}>
@@ -350,6 +359,7 @@ function AccountsEmptyIcon() {
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function AccountsScreen() {
+  const router = useRouter();
   const {
     accounts: storeAccounts,
     hiddenAccountIds: hiddenAccountIdsArray,
@@ -652,6 +662,7 @@ export default function AccountsScreen() {
                     onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
                     onDragMove={(dy) => handleDragMove(groupData.group, dy)}
                     onDragStart={(y0) => handleDragStart(groupData.group, index, y0)}
+                    onPress={() => router.push({ pathname: "/account-detail", params: { id: account.id } })}
                     onToggleHidden={() => toggleHiddenAccount(account.id)}
                     shift={getShift(groupData.group, index)}
                   />
@@ -849,6 +860,12 @@ const styles = StyleSheet.create({
     minHeight: ACCOUNT_ITEM_HEIGHT,
     paddingHorizontal: 4,
     paddingVertical: 8,
+  },
+  accountRowPressable: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: 12,
   },
   accountRowDragging: {
     borderRadius: 12,
