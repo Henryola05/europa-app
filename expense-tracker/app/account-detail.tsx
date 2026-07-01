@@ -559,7 +559,12 @@ export default function AccountDetailScreen() {
                   : tx.accountName;
 
                 return (
-                  <View key={tx.id} style={styles.txRow}>
+                  <Pressable
+                    key={tx.id}
+                    accessibilityRole="button"
+                    onPress={() => router.push({ pathname: "/add-entry", params: { transactionId: tx.id } })}
+                    style={styles.txRow}
+                  >
                     <View
                       style={[
                         styles.txEmojiCircle,
@@ -580,7 +585,7 @@ export default function AccountDetailScreen() {
                       {prefix}
                       {formatBalance(Math.abs(effect), currencySymbol)}
                     </Text>
-                  </View>
+                  </Pressable>
                 );
               })}
             </View>
