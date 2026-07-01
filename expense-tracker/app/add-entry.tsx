@@ -1812,9 +1812,7 @@ function PickerColumn({
       animated: false,
       y: selectedIndex * PICKER_ITEM_HEIGHT,
     });
-    // only on mount — parent uses `key` to force remount when items change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedIndex]);
 
   const handleScrollEnd = useCallback(
     (e: { nativeEvent: { contentOffset: { y: number } } }) => {

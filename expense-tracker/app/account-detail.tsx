@@ -146,15 +146,30 @@ function ChevronDownIcon() {
 // ─── Chart ────────────────────────────────────────────────────────────────────
 
 function BalanceChart({
+  balance,
   data,
   height,
   width,
 }: {
+  balance: number;
   data: number[];
   height: number;
   width: number;
 }) {
   if (data.length < 2) return <View style={{ height, width }} />;
+
+  const lineColor =
+    balance > 0
+      ? figmaColors.success["700"]
+      : balance < 0
+        ? figmaColors.error["600"]
+        : figmaColors.grayNeutral["400"];
+  const gradColor =
+    balance > 0
+      ? figmaColors.success["500"]
+      : balance < 0
+        ? figmaColors.error["400"]
+        : figmaColors.grayNeutral["300"];
 
   const min = Math.min(...data);
   const max = Math.max(...data);
@@ -175,15 +190,15 @@ function BalanceChart({
     <Svg height={height} width={width}>
       <Defs>
         <LinearGradient id="chartGrad" x1="0" x2="0" y1="0" y2="1">
-          <Stop offset="0%" stopColor={figmaColors.success["500"]} stopOpacity="0.18" />
-          <Stop offset="100%" stopColor={figmaColors.success["500"]} stopOpacity="0" />
+          <Stop offset="0%" stopColor={gradColor} stopOpacity="0.18" />
+          <Stop offset="100%" stopColor={gradColor} stopOpacity="0" />
         </LinearGradient>
       </Defs>
       <Path d={areaD} fill="url(#chartGrad)" />
       <Path
         d={lineD}
         fill="none"
-        stroke={figmaColors.success["700"]}
+        stroke={lineColor}
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={2}
@@ -441,7 +456,7 @@ export default function AccountDetailScreen() {
 
         {/* Chart */}
         <View style={styles.chartWrapper}>
-          <BalanceChart data={chartData} height={180} width={chartWidth} />
+          <BalanceChart balance={currentBalance} data={chartData} height={180} width={chartWidth} />
           <View style={styles.chartDateRow}>
             <Text style={styles.chartDateLabel}>{periodStartLabel}</Text>
             <Text style={styles.chartDateLabel}>{periodEndLabel}</Text>
