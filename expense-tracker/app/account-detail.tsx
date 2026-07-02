@@ -1,8 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { addDays, format, subMonths, subYears } from "date-fns";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
   Dimensions,
   Modal,
   Pressable,
@@ -11,7 +12,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { ClipPath, Defs, G, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 
 import { figmaColors } from "@/constants/colors";
@@ -207,10 +208,162 @@ function BalanceChart({
   );
 }
 
+// ─── Period Picker Sheet ──────────────────────────────────────────────────────
+
+function PeriodPickerSheet({
+  onClose,
+  onSelect,
+  selected,
+  visible,
+}: {
+  onClose: () => void;
+  onSelect: (p: Period) => void;
+  selected: Period;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const translateY = useRef(new Animated.Value(300)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      translateY.setValue(300);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { duration: 250, toValue: 1, useNativeDriver: true }),
+        Animated.spring(translateY, { bounciness: 0, speed: 20, toValue: 0, useNativeDriver: true }),
+      ]).start();
+    } else {
+      backdropOpacity.setValue(0);
+      translateY.setValue(300);
+    }
+  }, [backdropOpacity, translateY, visible]);
+
+  return (
+    <Modal animationType="none" onRequestClose={onClose} transparent visible={visible}>
+      <View style={sheetStyles.root}>
+        <Animated.View style={[StyleSheet.absoluteFillObject, sheetStyles.backdrop, { opacity: backdropOpacity }]}>
+          <Pressable onPress={onClose} style={StyleSheet.absoluteFill} />
+        </Animated.View>
+        <Animated.View
+          style={[
+            sheetStyles.sheet,
+            { paddingBottom: Math.max(insets.bottom, 24) },
+            { transform: [{ translateY }] },
+          ]}
+        >
+            {/* Header */}
+            <View style={sheetStyles.header}>
+              <Text style={sheetStyles.title}>Period</Text>
+              <Pressable accessibilityRole="button" onPress={onClose} style={sheetStyles.closeBtn}>
+                <Svg fill="none" height={16} viewBox="0 0 24 24" width={16}>
+                  <Path
+                    d="M18 6L6 18M6 6l12 12"
+                    stroke={figmaColors.grayNeutral["600"]}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                  />
+                </Svg>
+              </Pressable>
+            </View>
+            <View style={sheetStyles.divider} />
+
+            {/* Pills */}
+            <View style={sheetStyles.pillsGrid}>
+              {PERIODS.map((p) => {
+                const isActive = p === selected;
+                return (
+                  <Pressable
+                    key={p}
+                    accessibilityRole="button"
+                    onPress={() => onSelect(p)}
+                    style={[sheetStyles.pill, isActive && sheetStyles.pillActive]}
+                  >
+                    <Text style={[sheetStyles.pillText, isActive && sheetStyles.pillTextActive]}>
+                      {p}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+const sheetStyles = StyleSheet.create({
+  root: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  sheet: {
+    backgroundColor: figmaColors.base.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 20,
+    paddingHorizontal: 20,
+  },
+  header: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  title: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 18,
+    letterSpacing: -0.3,
+  },
+  closeBtn: {
+    alignItems: "center",
+    backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 999,
+    height: 32,
+    justifyContent: "center",
+    width: 32,
+  },
+  divider: {
+    backgroundColor: figmaColors.grayNeutral["200"],
+    height: StyleSheet.hairlineWidth,
+    marginBottom: 20,
+  },
+  pillsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  pill: {
+    backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+  },
+  pillActive: {
+    backgroundColor: figmaColors.grayNeutral["900"],
+  },
+  pillText: {
+    color: figmaColors.grayNeutral["700"],
+    fontFamily: fontFamily.medium,
+    fontSize: 15,
+    letterSpacing: -0.1,
+  },
+  pillTextActive: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.semiBold,
+  },
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function AccountDetailScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { accounts } = useAccountsStore();
 
@@ -610,40 +763,29 @@ export default function AccountDetailScreen() {
         <View style={{ height: 32 }} />
       </ScrollView>
 
-      {/* Period picker modal */}
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setIsPeriodPickerOpen(false)}
-        transparent
-        visible={isPeriodPickerOpen}
+      <Pressable
+        accessibilityLabel="Add entry"
+        accessibilityRole="button"
+        onPress={() => router.push("/add-entry")}
+        style={[styles.fab, { bottom: insets.bottom + 16 }]}
       >
-        <Pressable
-          onPress={() => setIsPeriodPickerOpen(false)}
-          style={styles.modalBackdrop}
-        >
-          <Pressable style={styles.periodPickerCard}>
-            {PERIODS.map((p) => (
-              <Pressable
-                key={p}
-                onPress={() => {
-                  setSelectedPeriod(p);
-                  setIsPeriodPickerOpen(false);
-                }}
-                style={[styles.periodOption, p === selectedPeriod && styles.periodOptionActive]}
-              >
-                <Text
-                  style={[
-                    styles.periodOptionText,
-                    p === selectedPeriod && styles.periodOptionTextActive,
-                  ]}
-                >
-                  {p}
-                </Text>
-              </Pressable>
-            ))}
-          </Pressable>
-        </Pressable>
-      </Modal>
+        <Svg fill="none" height={28} viewBox="0 0 24 24" width={28}>
+          <Path
+            d="M12 5v14M5 12h14"
+            stroke={figmaColors.base.white}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2.5}
+          />
+        </Svg>
+      </Pressable>
+
+      <PeriodPickerSheet
+        onClose={() => setIsPeriodPickerOpen(false)}
+        onSelect={(p) => { setSelectedPeriod(p); setIsPeriodPickerOpen(false); }}
+        selected={selectedPeriod}
+        visible={isPeriodPickerOpen}
+      />
     </SafeAreaView>
   );
 }
@@ -925,5 +1067,20 @@ const styles = StyleSheet.create({
   periodOptionTextActive: {
     color: figmaColors.blue["600"],
     fontFamily: fontFamily.semiBold,
+  },
+  fab: {
+    alignItems: "center",
+    backgroundColor: figmaColors.blue["500"],
+    borderRadius: 999,
+    elevation: 6,
+    height: 56,
+    justifyContent: "center",
+    position: "absolute",
+    right: 16,
+    shadowColor: figmaColors.base.black,
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    width: 56,
   },
 });
