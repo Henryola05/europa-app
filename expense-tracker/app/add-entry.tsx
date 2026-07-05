@@ -3211,8 +3211,9 @@ function ImageUploadBottomSheet({
 
 export default function AddEntryScreen() {
   const router = useRouter();
-  const { transactionId: routeTransactionId } = useLocalSearchParams<{
+  const { transactionId: routeTransactionId, accountId: routeAccountId } = useLocalSearchParams<{
     transactionId?: string;
+    accountId?: string;
   }>();
   const insets = useSafeAreaInsets();
   const { categoryColors } = useCategoriesStore();
@@ -3257,6 +3258,18 @@ export default function AddEntryScreen() {
   useEffect(() => {
     editInitializedRef.current = false;
   }, [transactionId]);
+
+  const accountId = typeof routeAccountId === "string" ? routeAccountId : undefined;
+  const localAccountsRef = useRef(localAccounts);
+  localAccountsRef.current = localAccounts;
+
+  useEffect(() => {
+    if (!accountId || isEditing) return;
+    const match = localAccountsRef.current.find((a) => a.id === accountId);
+    if (match) setSelectedAccount(match);
+    // localAccounts intentionally accessed via ref to avoid re-running on every render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountId, isEditing]);
 
   useFocusEffect(
     useCallback(() => {

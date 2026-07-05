@@ -766,7 +766,7 @@ export default function AccountDetailScreen() {
       <Pressable
         accessibilityLabel="Add entry"
         accessibilityRole="button"
-        onPress={() => router.push("/add-entry")}
+        onPress={() => router.push({ pathname: "/add-entry", params: { accountId: account.id } })}
         style={[styles.fab, { bottom: insets.bottom + 16 }]}
       >
         <Svg fill="none" height={28} viewBox="0 0 24 24" width={28}>
