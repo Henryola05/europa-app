@@ -5,7 +5,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Dimensions,
@@ -2640,15 +2640,11 @@ function CategoryPickerSheet({
   );
 }
 
-function DescriptionInput({
-  onChangeText,
-  placeholder,
-  value,
-}: {
+const DescriptionInput = forwardRef<TextInput, {
   onChangeText: (text: string) => void;
   placeholder: string;
   value: string;
-}) {
+}>(function DescriptionInput({ onChangeText, placeholder, value }, ref) {
   const [isFocused, setIsFocused] = useState(false);
   const isActive = isFocused || value.length > 0;
 
@@ -2659,6 +2655,7 @@ function DescriptionInput({
         {value || placeholder}
       </Text>
       <TextInput
+        ref={ref}
         autoCapitalize="sentences"
         cursorColor={figmaColors.blue["500"]}
         onBlur={() => setIsFocused(false)}
@@ -2677,7 +2674,7 @@ function DescriptionInput({
       />
     </View>
   );
-}
+});
 
 function SentencePill({
   children,
@@ -3379,6 +3376,7 @@ export default function AddEntryScreen() {
   const [isCreateAccountOpen, setIsCreateAccountOpen] = useState(false);
   const [isImageUploadOpen, setIsImageUploadOpen] = useState(false);
   const [transactionImages, setTransactionImages] = useState<SelectedImage[]>([]);
+  const descriptionInputRef = useRef<TextInput>(null);
 
   const currencySymbol = currencySymbols[selectedCurrency.code] ?? selectedCurrency.code;
   const hasAmount = amountCents > 0;
@@ -3561,6 +3559,7 @@ export default function AddEntryScreen() {
                 {transactionType === "income" ? "for" : "on"}
               </Text>
               <DescriptionInput
+                ref={descriptionInputRef}
                 onChangeText={setDescription}
                 placeholder={
                   transactionType === "income"
@@ -3685,7 +3684,17 @@ export default function AddEntryScreen() {
       <AmountInputSheet
         amountCents={amountCents}
         onChangeAmount={setAmountCents}
-        onClose={() => setIsAmountSheetOpen(false)}
+        onClose={() => {
+          setIsAmountSheetOpen(false);
+          setTimeout(() => {
+            if (transactionType === "transfer") {
+              if (!selectedAccount) setIsAccountPickerOpen(true);
+              else if (!transferDestinationAccount) setIsDestinationAccountPickerOpen(true);
+            } else {
+              descriptionInputRef.current?.focus();
+            }
+          }, 50);
+        }}
         onSelectCurrency={setSelectedCurrency}
         selectedCurrency={selectedCurrency}
         visible={isAmountSheetOpen}
