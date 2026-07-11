@@ -3,7 +3,7 @@ import { format } from "date-fns";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -24,10 +24,14 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import Svg, { Circle, Path } from "react-native-svg";
+import Svg, { Circle, ClipPath, Defs, G, Path, Rect } from "react-native-svg";
 
 import { figmaColors } from "@/constants/colors";
+import { EmojiPickerSheet } from "@/components/EmojiPickerSheet";
+import { COLOR_PALETTE } from "@/constants/categories";
 import { fontFamily } from "@/constants/typography";
+import { useCategoriesStore } from "@/stores/categories";
+import { accountGroupOrder, useAccountsStore, type AccountGroup as StoreAccountGroup } from "@/stores/accounts";
 import {
   currencies,
   currencySymbols,
@@ -310,57 +314,7 @@ type ExpenseCategory = {
   name: string;
 };
 
-const expenseCategories: ExpenseCategory[] = [
-  { emoji: "🍜", name: "Food" },
-  { emoji: "👫", name: "Social Life" },
-  { emoji: "🐾", name: "Pets" },
-  { emoji: "🚗", name: "Transport" },
-  { emoji: "🖼️", name: "Culture" },
-  { emoji: "🏠", name: "Rent" },
-  { emoji: "👕", name: "Apparel" },
-  { emoji: "💄", name: "Beauty" },
-  { emoji: "💊", name: "Health" },
-  { emoji: "📓", name: "Education" },
-  { emoji: "🎁", name: "Gift" },
-  { emoji: "⛽", name: "Fuel" },
-  { emoji: "🏦", name: "Loan" },
-  { emoji: "☎️", name: "Airtime" },
-  { emoji: "🔄", name: "Subscription" },
-  { emoji: "📦", name: "Other" },
-];
-
-const categoryColors: Record<string, string> = {
-  Food: "#ef4444",
-  "Social Life": "#3b82f6",
-  Pets: "#f97316",
-  Transport: "#22c55e",
-  Culture: "#f59e0b",
-  Rent: "#a855f7",
-  Apparel: "#06b6d4",
-  Beauty: "#ec4899",
-  Health: "#14b8a6",
-  Education: "#8b5cf6",
-  Gift: "#f43f5e",
-  Fuel: "#78716c",
-  Loan: "#64748b",
-  Airtime: "#0ea5e9",
-  Subscription: "#10b981",
-  Other: "#6b7280",
-};
-
-type AccountGroup =
-  | "Cash"
-  | "Accounts"
-  | "Credit Card"
-  | "Debit Card"
-  | "Savings"
-  | "Investments"
-  | "Top-Up/Prepaid"
-  | "Overdrafts"
-  | "Loan"
-  | "Insurance"
-  | "Mobile Money"
-  | "Others";
+type AccountGroup = StoreAccountGroup;
 
 type Account = {
   id: string;
@@ -375,6 +329,18 @@ type StoredTransaction = {
   type: "income" | "expense" | "transfer";
   amountCents: number;
   accountName: string;
+  destinationAccountName?: string;
+};
+
+type RecordedTransaction = StoredTransaction & {
+  categoryColor?: string;
+  categoryEmoji: string;
+  categoryName: string;
+  currencyCode: string;
+  date: string;
+  description: string;
+  imageUris: string[];
+  recurringOption: string;
 };
 
 type AccountGroupData = {
@@ -393,36 +359,18 @@ type SelectedImage = {
   source: "recent" | "gallery" | "camera";
 };
 
-const accountGroupOrder: AccountGroup[] = [
-  "Cash",
-  "Accounts",
-  "Credit Card",
-  "Debit Card",
-  "Savings",
-  "Investments",
-  "Top-Up/Prepaid",
-  "Overdrafts",
-  "Loan",
-  "Insurance",
-  "Mobile Money",
-  "Others",
-];
-
 const ACCOUNT_ITEM_HEIGHT = 52;
+const HOME_CURRENCY_KEY = "europa:home-currency";
 const TRANSACTIONS_KEY = "europa:transactions";
-const ACCOUNTS_KEY = "europa:accounts";
-
-const defaultAccounts: Account[] = [
-  { id: "cash-wallet", name: "Cash Wallet", group: "Cash", balanceCents: 0, openingBalanceCents: 0 },
-  { id: "chase", name: "Chase", group: "Accounts", balanceCents: 0, openingBalanceCents: 0 },
-  { id: "wells-fargo", name: "Wells Fargo", group: "Accounts", balanceCents: 0, openingBalanceCents: 0 },
-  { id: "venmo", name: "Venmo", group: "Mobile Money", balanceCents: 0, openingBalanceCents: 0 },
-  { id: "cash-app", name: "Cash App", group: "Mobile Money", balanceCents: 0, openingBalanceCents: 0 },
-];
 
 function applyTransactionsToAccounts(accounts: Account[], transactions: StoredTransaction[]): Account[] {
   return accounts.map((account) => {
     const net = transactions.reduce((sum, tx) => {
+      if (tx.type === "transfer") {
+        if (tx.accountName === account.name) return sum - tx.amountCents;
+        if (tx.destinationAccountName === account.name) return sum + tx.amountCents;
+        return sum;
+      }
       if (tx.accountName !== account.name) return sum;
       if (tx.type === "income") return sum + tx.amountCents;
       if (tx.type === "expense") return sum - tx.amountCents;
@@ -445,22 +393,12 @@ function groupAccounts(accounts: Account[]): AccountGroupData[] {
     .filter((g) => g.accounts.length > 0);
 }
 
-function reorderAccountsInGroup(
-  accounts: Account[],
-  group: AccountGroup,
-  orderedIds: string[],
-): Account[] {
-  const ordered = orderedIds
-    .map((id) => accounts.find((a) => a.id === id))
-    .filter((a): a is Account => a !== undefined);
-  let idx = 0;
-  return accounts.map((a) => (a.group === group ? ordered[idx++] ?? a : a));
-}
 
-type CreateAccountValues = {
+export type CreateAccountValues = {
   groupId: AccountGroup;
   name: string;
   balance: number;
+  currencyCode: string;
   description?: string;
 };
 
@@ -611,12 +549,6 @@ function CameraIcon({ size = 28 }: { size?: number }) {
 
 const CATEGORY_ITEM_HEIGHT = 56;
 
-const COLOR_PALETTE = [
-  "#60A5FA", "#FB923C", "#FCA5A5", "#4ADE80", "#FDE047", "#C084FC",
-  "#EF4444", "#2DD4BF", "#F97316", "#3B82F6", "#F9A8D4", "#22D3EE",
-  "#16A34A", "#EAB308", "#10B981", "#9333EA", "#0891B2", "#B91C1C",
-  "#BE185D", "#0F766E", "#B45309", "#166534", "#991B1B", "#1D4ED8",
-];
 
 const PICKER_ITEM_HEIGHT = 44;
 const PICKER_VISIBLE_COUNT = 5;
@@ -746,6 +678,7 @@ function NewCategorySheet({
   onClose,
   onDelete,
   onSave,
+  type = "expense",
   visible,
 }: {
   initialColor?: string;
@@ -754,6 +687,7 @@ function NewCategorySheet({
   onClose: () => void;
   onDelete?: () => void;
   onSave: (category: ExpenseCategory, color: string) => void;
+  type?: "expense" | "income";
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
@@ -763,7 +697,8 @@ function NewCategorySheet({
   const [name, setName] = useState("");
   const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[6]);
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
-  const emojiInputRef = useRef<TextInput>(null);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const nameInputRef = useRef<TextInput>(null);
 
   // Refs so useEffect can read latest initial values without re-running on every prop change
   const initialEmojiRef = useRef(initialEmoji);
@@ -796,6 +731,7 @@ function NewCategorySheet({
       setName(initialNameRef.current ?? "");
       setSelectedColor(initialColorRef.current ?? COLOR_PALETTE[6]);
       setIsColorPickerOpen(false);
+      setIsEmojiPickerOpen(true);
       translateY.setValue(500);
       Animated.parallel([
         Animated.timing(backdropOpacity, {
@@ -810,7 +746,6 @@ function NewCategorySheet({
           useNativeDriver: true,
         }),
       ]).start();
-      setTimeout(() => emojiInputRef.current?.focus(), 300);
     } else {
       backdropOpacity.setValue(0);
       translateY.setValue(500);
@@ -858,7 +793,7 @@ function NewCategorySheet({
             ]}
           >
             <View style={styles.categorySheetHeader}>
-              <Text style={styles.categorySheetTitle}>Expense Category</Text>
+              <Text style={styles.categorySheetTitle}>{type === "income" ? "Income" : "Expense"} Category</Text>
               <View style={styles.categorySheetHeaderActions}>
                 {onDelete && (
                   <Pressable
@@ -882,16 +817,6 @@ function NewCategorySheet({
             </View>
 
             <View style={styles.categoryDivider} />
-
-            {/* Always mounted so the keyboard never closes */}
-            <TextInput
-              ref={emojiInputRef}
-              onChangeText={(text) => {
-                if (text) setEmoji(text);
-              }}
-              style={styles.hiddenEmojiInput}
-              value=""
-            />
 
             {isColorPickerOpen ? (
               <View style={styles.colorPickerPanel}>
@@ -924,7 +849,7 @@ function NewCategorySheet({
                 <Pressable
                   accessibilityLabel="Pick emoji"
                   accessibilityRole="button"
-                  onPress={() => emojiInputRef.current?.focus()}
+                  onPress={() => setIsEmojiPickerOpen(true)}
                   style={[styles.emojiPreviewBox, { backgroundColor: selectedColor }]}
                 >
                   {emoji ? (
@@ -947,6 +872,7 @@ function NewCategorySheet({
                 ]}
               />
               <TextInput
+                ref={nameInputRef}
                 onChangeText={setName}
                 placeholder="Category Name"
                 placeholderTextColor={figmaColors.grayNeutral["400"]}
@@ -970,6 +896,14 @@ function NewCategorySheet({
           </Animated.View>
         </View>
       </KeyboardAvoidingView>
+      <EmojiPickerSheet
+        visible={isEmojiPickerOpen}
+        onSelect={(e) => {
+          setEmoji(e);
+          setTimeout(() => nameInputRef.current?.focus(), 350);
+        }}
+        onClose={() => setIsEmojiPickerOpen(false)}
+      />
     </Modal>
   );
 }
@@ -1058,7 +992,7 @@ function GroupPickerSheet({
   );
 }
 
-function CreateAccountBottomSheet({
+export function CreateAccountBottomSheet({
   groups,
   onClose,
   onSubmit,
@@ -1121,6 +1055,7 @@ function CreateAccountBottomSheet({
         groupId: selectedGroup,
         name: name.trim(),
         balance: balanceCents / 100,
+        currencyCode: localCurrency.code,
         description: description.trim() || undefined,
       });
     } finally {
@@ -1704,6 +1639,28 @@ function AccountsBottomSheet({
   );
 }
 
+function AccountsEmptyIcon() {
+  return (
+    <Svg fill="none" height={80} viewBox="0 0 79 80" width={79}>
+      <Defs>
+        <ClipPath id="acct-empty-clip">
+          <Rect fill="white" height={80} width={79} />
+        </ClipPath>
+      </Defs>
+      <G clipPath="url(#acct-empty-clip)">
+        <Path d="M71.0805 14.6487H9.45502C8.62362 14.6492 7.82642 14.9839 7.23853 15.5792C6.65064 16.1745 6.32014 16.9818 6.31963 17.8238V75.0815C6.32014 75.9234 6.65064 76.7307 7.23853 77.326C7.82642 77.9213 8.62362 78.256 9.45502 78.2565H71.0805C71.912 78.2561 72.7093 77.9215 73.2972 77.3261C73.8852 76.7308 74.2157 75.9234 74.2162 75.0815V17.8238C74.2157 16.9818 73.8852 16.1744 73.2972 15.5791C72.7093 14.9838 71.912 14.6491 71.0805 14.6487Z" fill="#D2D6DB" />
+        <Path d="M67.0237 58.3598H13.5126C11.781 58.3598 10.3772 56.9382 10.3772 55.1848V4.59459C10.3772 2.84115 11.781 1.41951 13.5126 1.41951H67.0237C68.7553 1.41951 70.1591 2.84115 70.1591 4.59459V55.1848C70.1591 56.9382 68.7553 58.3598 67.0237 58.3598Z" fill="#E5E7EB" />
+        <Path d="M11.3698 56.1897V5.59983C11.3698 3.84639 12.7737 2.42475 14.5052 2.42475H68.0164C68.628 2.42475 69.1966 2.60475 69.6787 2.91131C69.1244 2.01623 68.144 1.41951 67.0237 1.41951H13.5126C11.781 1.41951 10.3772 2.84115 10.3772 4.59459V55.1847C10.3772 56.3195 10.9664 57.312 11.8503 57.8736C11.5476 57.3851 11.3698 56.8093 11.3698 56.19V56.1897Z" fill="white" />
+        <Path d="M60.4397 12.1084H20.0969V14.4366H60.4397V12.1084ZM60.4397 20.9983H20.0969V23.3265H60.4397V20.9983ZM60.4397 29.8901H20.0969V32.2183H60.4397V29.8901ZM60.4397 38.7799H20.0969V41.1084H60.4397V38.7799Z" fill="white" />
+        <Path d="M24.9045 31.2652L35.042 41.5314H24.9045V31.2652Z" fill="#D2D6DB" />
+        <Path d="M74.2164 42.3782V18.7575L70.1593 14.6487V42.3779H74.2164V42.3782Z" fill="#D2D6DB" />
+        <Path d="M78.9686 44.5148L74.5974 75.8498C74.3788 77.4164 73.0549 78.5807 71.4927 78.5807H9.04323C7.48104 78.5807 6.15714 77.4164 5.9386 75.8498L0.0314057 33.5085C-0.235057 31.597 1.22968 29.8892 3.13604 29.8892H22.4218C23.9839 29.8892 25.3078 31.0534 25.5264 32.6197L26.3005 38.1646C26.5191 39.7311 27.843 40.8954 29.4052 40.8954H75.8646C77.7703 40.8954 79.2354 42.6033 78.9689 44.5148H78.9686Z" fill="#D2D6DB" />
+        <Path d="M63.4808 64.6039H17.0557C16.8012 64.6038 16.5555 64.5098 16.3646 64.3394C16.1737 64.169 16.0507 63.934 16.0187 63.6784L15.4378 59.0213C15.4194 58.8723 15.4324 58.7211 15.4761 58.5776C15.5197 58.4341 15.593 58.3017 15.6911 58.1891C15.7892 58.0764 15.9098 57.9862 16.0449 57.9244C16.18 57.8626 16.3266 57.8306 16.4749 57.8305H64.0617C64.2099 57.8306 64.3565 57.8626 64.4916 57.9244C64.6267 57.9862 64.7473 58.0764 64.8454 58.1891C64.9435 58.3017 65.0168 58.4341 65.0604 58.5776C65.1041 58.7211 65.1172 58.8723 65.0987 59.0213L64.5179 63.6784C64.4858 63.934 64.3628 64.169 64.1719 64.3394C63.981 64.5098 63.7353 64.6038 63.4808 64.6039Z" fill="#F9FAFB" />
+      </G>
+    </Svg>
+  );
+}
+
 function AccountPickerSheet({
   accounts,
   onClose,
@@ -1786,33 +1743,50 @@ function AccountPickerSheet({
 
             <View style={styles.categoryDivider} />
 
-            <ScrollView contentContainerStyle={styles.categoryGrid} showsVerticalScrollIndicator={false}>
-              {accounts.map((account) => {
-                const isSelected = selectedAccount?.id === account.id;
-                return (
-                  <Pressable
-                    accessibilityLabel={`Select ${account.name}`}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: isSelected }}
-                    key={account.id}
-                    onPress={() => { onSelectAccount(account); closeSheet(); }}
-                    style={[styles.categoryChip, isSelected && styles.categoryChipSelected]}
-                  >
-                    <Text style={[styles.categoryChipText, isSelected && styles.categoryChipTextSelected]}>
-                      {account.name}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-              <Pressable
-                accessibilityLabel="New account"
-                accessibilityRole="button"
-                onPress={onNewAccount}
-                style={styles.categoryChip}
-              >
-                <Text style={styles.categoryChipText}>+ New account</Text>
-              </Pressable>
-            </ScrollView>
+            {accounts.length === 0 ? (
+              <View style={styles.accountsEmptyState}>
+                <AccountsEmptyIcon />
+                <Text style={styles.accountsEmptyTitle}>No accounts yet</Text>
+                <Text style={styles.accountsEmptySubtitle}>
+                  {"Add an account to start\ntracking your money."}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={onNewAccount}
+                  style={({ pressed }) => [styles.accountsEmptyButton, pressed && { opacity: 0.85 }]}
+                >
+                  <Text style={styles.accountsEmptyButtonText}>+ Add account</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <ScrollView contentContainerStyle={styles.categoryGrid} showsVerticalScrollIndicator={false}>
+                {accounts.map((account) => {
+                  const isSelected = selectedAccount?.id === account.id;
+                  return (
+                    <Pressable
+                      accessibilityLabel={`Select ${account.name}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isSelected }}
+                      key={account.id}
+                      onPress={() => { onSelectAccount(account); closeSheet(); }}
+                      style={[styles.categoryChip, isSelected && styles.categoryChipSelected]}
+                    >
+                      <Text style={[styles.categoryChipText, isSelected && styles.categoryChipTextSelected]}>
+                        {account.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+                <Pressable
+                  accessibilityLabel="New account"
+                  accessibilityRole="button"
+                  onPress={onNewAccount}
+                  style={styles.categoryChip}
+                >
+                  <Text style={styles.categoryChipText}>+ New account</Text>
+                </Pressable>
+              </ScrollView>
+            )}
           </Animated.View>
         </View>
       </View>
@@ -1838,9 +1812,7 @@ function PickerColumn({
       animated: false,
       y: selectedIndex * PICKER_ITEM_HEIGHT,
     });
-    // only on mount — parent uses `key` to force remount when items change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedIndex]);
 
   const handleScrollEnd = useCallback(
     (e: { nativeEvent: { contentOffset: { y: number } } }) => {
@@ -2342,11 +2314,13 @@ function CustomIntervalSheet({
 }
 
 function CategoryPickerSheet({
+  type = "expense",
   onClose,
   onSelectCategory,
   selectedCategory,
   visible,
 }: {
+  type?: "expense" | "income";
   onClose: () => void;
   onSelectCategory: (category: ExpenseCategory) => void;
   selectedCategory: ExpenseCategory | null;
@@ -2361,8 +2335,19 @@ function CategoryPickerSheet({
     category: ExpenseCategory;
     color: string;
   } | null>(null);
+  const {
+    expenseCategories: storeExpense,
+    incomeCategories: storeIncome,
+    categoryColors,
+    addCategory,
+    deleteCategory,
+    updateCategory,
+    reorderCategories,
+  } = useCategoriesStore();
+  const storeCategories = type === "expense" ? storeExpense : storeIncome;
+  const title = type === "expense" ? "Expense Categories" : "Income Categories";
   const [localCategories, setLocalCategories] = useState<ExpenseCategory[]>(
-    () => [...expenseCategories],
+    () => [...storeCategories],
   );
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [snapTarget, setSnapTarget] = useState<number | null>(null);
@@ -2370,6 +2355,10 @@ function CategoryPickerSheet({
   const snapTargetRef = useRef<number | null>(null);
   const localLengthRef = useRef(localCategories.length);
   localLengthRef.current = localCategories.length;
+
+  useEffect(() => {
+    setLocalCategories([...storeCategories]);
+  }, [storeCategories]);
 
   const closeSheet = useCallback(() => {
     Animated.parallel([
@@ -2412,38 +2401,39 @@ function CategoryPickerSheet({
   }, [backdropOpacity, translateY, visible]);
 
   const handleDelete = useCallback((name: string) => {
+    deleteCategory(type, name);
     setLocalCategories((prev) => prev.filter((c) => c.name !== name));
-  }, []);
+  }, [deleteCategory, type]);
 
   const handleAddCategory = useCallback(
     (category: ExpenseCategory, color: string) => {
-      categoryColors[category.name] = color;
+      addCategory(type, category, color);
       setLocalCategories((prev) => [...prev, category]);
     },
-    [],
+    [addCategory, type],
   );
 
   const handleUpdateCategory = useCallback(
     (newCategory: ExpenseCategory, color: string) => {
       const oldName = editingCategory?.category.name;
       if (!oldName) return;
-      if (newCategory.name !== oldName) delete categoryColors[oldName];
-      categoryColors[newCategory.name] = color;
+      updateCategory(type, oldName, newCategory, color);
       setLocalCategories((prev) =>
         prev.map((c) => (c.name === oldName ? newCategory : c)),
       );
       setEditingCategory(null);
     },
-    [editingCategory],
+    [editingCategory, type, updateCategory],
   );
 
   const handleDeleteEditingCategory = useCallback(() => {
     if (!editingCategory) return;
+    deleteCategory(type, editingCategory.category.name);
     setLocalCategories((prev) =>
       prev.filter((c) => c.name !== editingCategory.category.name),
     );
     setEditingCategory(null);
-  }, [editingCategory]);
+  }, [deleteCategory, editingCategory, type]);
 
   const handleDragStart = useCallback((index: number) => {
     dragIndexRef.current = index;
@@ -2480,12 +2470,13 @@ function CategoryPickerSheet({
         Math.min(prev.length - 1, from + Math.round(dy / CATEGORY_ITEM_HEIGHT)),
       );
       if (to === from) return prev;
+      reorderCategories(type, from, to);
       const next = [...prev];
       const [item] = next.splice(from, 1);
       next.splice(to, 0, item);
       return next;
     });
-  }, []);
+  }, [reorderCategories, type]);
 
   return (
     <Modal
@@ -2515,7 +2506,7 @@ function CategoryPickerSheet({
             ]}
           >
             <View style={styles.categorySheetHeader}>
-              <Text style={styles.categorySheetTitle}>Expense Categories</Text>
+              <Text style={styles.categorySheetTitle}>{title}</Text>
               <View style={styles.categorySheetHeaderActions}>
                 <Pressable
                   accessibilityLabel={
@@ -2642,6 +2633,7 @@ function CategoryPickerSheet({
         }}
         onDelete={editingCategory ? handleDeleteEditingCategory : undefined}
         onSave={editingCategory ? handleUpdateCategory : handleAddCategory}
+        type={type}
         visible={isNewCategoryOpen || editingCategory !== null}
       />
     </Modal>
@@ -2650,9 +2642,11 @@ function CategoryPickerSheet({
 
 function DescriptionInput({
   onChangeText,
+  placeholder,
   value,
 }: {
   onChangeText: (text: string) => void;
+  placeholder: string;
   value: string;
 }) {
   const [isFocused, setIsFocused] = useState(false);
@@ -2662,7 +2656,7 @@ function DescriptionInput({
     <View style={[styles.pill, isActive && styles.pillAccent]}>
       {/* Invisible sizer — pill width tracks content or placeholder */}
       <Text numberOfLines={1} style={[styles.pillText, styles.descriptionSizer]}>
-        {value || "e.g jollof and chicken"}
+        {value || placeholder}
       </Text>
       <TextInput
         autoCapitalize="sentences"
@@ -2670,7 +2664,7 @@ function DescriptionInput({
         onBlur={() => setIsFocused(false)}
         onChangeText={onChangeText}
         onFocus={() => setIsFocused(true)}
-        placeholder="e.g jollof and chicken"
+        placeholder={placeholder}
         placeholderTextColor={figmaColors.grayNeutral["400"]}
         returnKeyType="done"
         selectionColor={figmaColors.blue["500"]}
@@ -2796,12 +2790,32 @@ function AmountInputSheet({
   const [expression, setExpression] = useState(centsToExpression(amountCents));
   const [isCurrencyPickerOpen, setIsCurrencyPickerOpen] = useState(false);
   const currencyCode = selectedCurrency.code;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(800)).current;
 
   useEffect(() => {
     if (visible) {
       setExpression(centsToExpression(amountCents));
+      translateY.setValue(800);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
+        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
+      ]).start();
     }
-  }, [amountCents, visible]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  const closeWithAnimation = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+      Animated.timing(translateY, { duration: 220, toValue: 800, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) {
+        onClose();
+        onDismiss?.();
+      }
+    });
+  }, [backdropOpacity, onClose, onDismiss, translateY]);
 
   const handleKeyPress = (key: KeypadKey) => {
     if (key.type === "empty") {
@@ -2810,7 +2824,7 @@ function AmountInputSheet({
 
     if (key.type === "ok") {
       onChangeAmount(expressionToCents(expression));
-      onClose();
+      closeWithAnimation();
       return;
     }
 
@@ -2855,24 +2869,28 @@ function AmountInputSheet({
 
   return (
     <Modal
-      animationType="slide"
-      onDismiss={onDismiss}
-      onRequestClose={onClose}
+      animationType="none"
+      onRequestClose={closeWithAnimation}
       transparent
       visible={visible}
     >
       <View style={styles.amountSheetBackdrop}>
-        <Pressable
-          accessibilityLabel="Close amount input"
-          accessibilityRole="button"
-          onPress={onClose}
-          style={styles.amountSheetDismissArea}
-        />
+        <Animated.View
+          pointerEvents="box-none"
+          style={[styles.amountSheetOverlay, { opacity: backdropOpacity }]}
+        >
+          <Pressable
+            accessibilityLabel="Close amount input"
+            accessibilityRole="button"
+            onPress={closeWithAnimation}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
 
-        <View
+        <Animated.View
           style={[
             styles.amountSheet,
-            { paddingBottom: Math.max(insets.bottom, 8) },
+            { paddingBottom: Math.max(insets.bottom, 8), transform: [{ translateY }] },
           ]}
         >
           <View style={styles.amountSheetHeader}>
@@ -2881,7 +2899,7 @@ function AmountInputSheet({
               accessibilityLabel="Close amount input"
               accessibilityRole="button"
               hitSlop={10}
-              onPress={onClose}
+              onPress={closeWithAnimation}
               style={styles.closeButton}
             >
               <CloseIcon />
@@ -2954,7 +2972,7 @@ function AmountInputSheet({
               </View>
             ))}
           </View>
-        </View>
+        </Animated.View>
       </View>
 
       <CurrencyPicker
@@ -3193,7 +3211,16 @@ function ImageUploadBottomSheet({
 
 export default function AddEntryScreen() {
   const router = useRouter();
+  const { transactionId: routeTransactionId, accountId: routeAccountId } = useLocalSearchParams<{
+    transactionId?: string;
+    accountId?: string;
+  }>();
   const insets = useSafeAreaInsets();
+  const { categoryColors } = useCategoriesStore();
+  const transactionId =
+    typeof routeTransactionId === "string" ? routeTransactionId : undefined;
+  const isEditing = transactionId !== undefined;
+  const editInitializedRef = useRef(false);
   const [transactionType, setTransactionType] =
     useState<TransactionType>("expense");
   const [amountCents, setAmountCents] = useState(0);
@@ -3212,33 +3239,103 @@ export default function AddEntryScreen() {
   const [selectedCategory, setSelectedCategory] =
     useState<ExpenseCategory | null>(null);
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
-  const [localAccounts, setLocalAccounts] = useState<Account[]>(() => [...defaultAccounts]);
+  const {
+    accounts: storeAccounts,
+    hiddenAccountIds: hiddenAccountIdsArray,
+    addAccount: storeAddAccount,
+    removeAccount: storeRemoveAccount,
+    reorderInGroup,
+    moveToGroup,
+    setOpeningBalance,
+  } = useAccountsStore();
+  const hiddenAccountIdSet = useMemo(() => new Set(hiddenAccountIdsArray), [hiddenAccountIdsArray]);
+  const localAccounts: Account[] = storeAccounts.map((a) => ({ ...a, balanceCents: a.openingBalanceCents }));
   const [allTransactions, setAllTransactions] = useState<StoredTransaction[]>([]);
   const [editBalanceAccountId, setEditBalanceAccountId] = useState<string | null>(null);
   const [editBalanceCents, setEditBalanceCents] = useState(0);
   const [isEditBalanceOpen, setIsEditBalanceOpen] = useState(false);
-  const accountsReadyRef = useRef(false);
+
+  useEffect(() => {
+    editInitializedRef.current = false;
+  }, [transactionId]);
+
+  const accountId = typeof routeAccountId === "string" ? routeAccountId : undefined;
+  const localAccountsRef = useRef(localAccounts);
+  localAccountsRef.current = localAccounts;
+
+  useEffect(() => {
+    if (!accountId || isEditing) return;
+    const match = localAccountsRef.current.find((a) => a.id === accountId);
+    if (match) setSelectedAccount(match);
+    // localAccounts intentionally accessed via ref to avoid re-running on every render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountId, isEditing]);
 
   useFocusEffect(
     useCallback(() => {
       Promise.all([
-        AsyncStorage.getItem(ACCOUNTS_KEY),
         AsyncStorage.getItem(TRANSACTIONS_KEY),
-      ]).then(([accountData, txData]) => {
-        accountsReadyRef.current = true;
-        if (accountData) {
-          const parsed = JSON.parse(accountData) as Account[];
-          setLocalAccounts(parsed.map((a) => ({ ...a, openingBalanceCents: 0, balanceCents: 0 })));
-        }
-        if (txData) setAllTransactions(JSON.parse(txData) as StoredTransaction[]);
-      }).catch(() => {});
-    }, []),
-  );
+        AsyncStorage.getItem(HOME_CURRENCY_KEY),
+      ]).then(([txData, homeCurrencyCode]) => {
+        const storedTransactions = txData
+          ? (JSON.parse(txData) as RecordedTransaction[])
+          : [];
 
-  useEffect(() => {
-    if (!accountsReadyRef.current) return;
-    AsyncStorage.setItem(ACCOUNTS_KEY, JSON.stringify(localAccounts)).catch(() => {});
-  }, [localAccounts]);
+        setAllTransactions(storedTransactions);
+
+        if (homeCurrencyCode && !transactionId) {
+          const homeCurrency = currencies.find((c) => c.code === homeCurrencyCode);
+          if (homeCurrency) setSelectedCurrency(homeCurrency);
+        }
+
+        if (!transactionId || editInitializedRef.current) return;
+
+        const transaction = storedTransactions.find(
+          (stored) => stored.id === transactionId,
+        );
+        if (!transaction) return;
+
+        editInitializedRef.current = true;
+        setTransactionType(transaction.type);
+        setAmountCents(transaction.amountCents);
+        setDescription(transaction.description ?? "");
+        setSelectedCurrency(
+          currencies.find((currency) => currency.code === transaction.currencyCode) ??
+            currencies[0],
+        );
+        setSelectedDate(new Date(transaction.date));
+        setRecurringOption(transaction.recurringOption ?? "Never");
+        setSelectedCategory(
+          transaction.type === "transfer" ||
+            !transaction.categoryName ||
+            transaction.categoryName === "Uncategorized"
+            ? null
+            : {
+                emoji: transaction.categoryEmoji,
+                name: transaction.categoryName,
+              },
+        );
+        setSelectedAccount(
+          localAccounts.find((account) => account.name === transaction.accountName) ??
+            null,
+        );
+        setTransferDestinationAccount(
+          localAccounts.find(
+            (account) => account.name === transaction.destinationAccountName,
+          ) ?? null,
+        );
+        setTransactionImages(
+          (transaction.imageUris ?? []).map((uri, index) => ({
+            height: 0,
+            id: `${transaction.id}-image-${index}`,
+            source: "gallery" as const,
+            uri,
+            width: 0,
+          })),
+        );
+      }).catch(() => {});
+    }, [transactionId]),
+  );
 
   const displayAccounts = useMemo(
     () => applyTransactionsToAccounts(localAccounts, allTransactions),
@@ -3257,23 +3354,27 @@ export default function AddEntryScreen() {
     if (!editBalanceAccountId) return;
     const net = allTransactions.reduce((sum, tx) => {
       const account = localAccounts.find((a) => a.id === editBalanceAccountId);
-      if (!account || tx.accountName !== account.name) return sum;
+      if (!account) return sum;
+      if (tx.type === "transfer") {
+        if (tx.accountName === account.name) return sum - tx.amountCents;
+        if (tx.destinationAccountName === account.name) return sum + tx.amountCents;
+        return sum;
+      }
+      if (tx.accountName !== account.name) return sum;
       if (tx.type === "income") return sum + tx.amountCents;
       if (tx.type === "expense") return sum - tx.amountCents;
       return sum;
     }, 0);
-    setLocalAccounts((prev) =>
-      prev.map((a) =>
-        a.id === editBalanceAccountId
-          ? { ...a, openingBalanceCents: newBalanceCents - net, balanceCents: newBalanceCents - net }
-          : a,
-      ),
-    );
+    setOpeningBalance(editBalanceAccountId, newBalanceCents - net);
     setIsEditBalanceOpen(false);
     setEditBalanceAccountId(null);
   }
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [isAccountPickerOpen, setIsAccountPickerOpen] = useState(false);
+  const [transferDestinationAccount, setTransferDestinationAccount] =
+    useState<Account | null>(null);
+  const [isDestinationAccountPickerOpen, setIsDestinationAccountPickerOpen] =
+    useState(false);
   const [isAccountsEditOpen, setIsAccountsEditOpen] = useState(false);
   const [isCreateAccountOpen, setIsCreateAccountOpen] = useState(false);
   const [isImageUploadOpen, setIsImageUploadOpen] = useState(false);
@@ -3283,32 +3384,49 @@ export default function AddEntryScreen() {
   const hasAmount = amountCents > 0;
   const amountLabel = hasAmount
     ? formatAmountLabel(amountCents, currencySymbol)
-    : `e.g ${currencySymbol}500.00`;
+    : `e.g ${currencySymbol}${transactionType !== "expense" ? "1,000.00" : "500.00"}`;
+  const isTransfer = transactionType === "transfer";
+  const canRecord =
+    hasAmount &&
+    selectedAccount !== null &&
+    (isTransfer
+      ? transferDestinationAccount !== null &&
+        selectedAccount.id !== transferDestinationAccount.id
+      : selectedCategory !== null);
 
   const sentenceVerb =
     transactionType === "income"
-      ? "earned"
+      ? "received"
       : transactionType === "transfer"
-        ? "transferred"
+        ? "moved"
         : "spent";
 
   const recordLabel =
-    transactionType === "income"
-      ? "Record income"
-      : transactionType === "transfer"
-        ? "Record transfer"
-        : "Record expense";
+    isEditing
+      ? "Save"
+      : transactionType === "income"
+        ? "Record income"
+        : transactionType === "transfer"
+          ? "Record transfer"
+          : "Record expense";
 
   async function handleRecord() {
-    const transaction = {
-      id: Math.random().toString(36).slice(2),
+    if (!canRecord) return;
+
+    const transaction: RecordedTransaction = {
+      id: transactionId ?? Math.random().toString(36).slice(2),
       type: transactionType,
       amountCents,
       description,
-      categoryEmoji: selectedCategory?.emoji ?? "",
-      categoryName: selectedCategory?.name ?? "Uncategorized",
-      categoryColor: categoryColors[selectedCategory?.name ?? ""] ?? figmaColors.grayNeutral["300"],
+      categoryEmoji: isTransfer ? "↔️" : selectedCategory?.emoji ?? "",
+      categoryName: isTransfer ? "Transfer" : selectedCategory?.name ?? "Uncategorized",
+      categoryColor: isTransfer
+        ? figmaColors.grayNeutral["400"]
+        : categoryColors[selectedCategory?.name ?? ""] ?? figmaColors.grayNeutral["300"],
       accountName: selectedAccount?.name ?? "",
+      destinationAccountName: isTransfer
+        ? transferDestinationAccount?.name ?? ""
+        : undefined,
       date: selectedDate.toISOString(),
       currencyCode: selectedCurrency.code,
       recurringOption,
@@ -3316,13 +3434,39 @@ export default function AddEntryScreen() {
     };
     try {
       const existing = await AsyncStorage.getItem(TRANSACTIONS_KEY);
-      const list = existing ? (JSON.parse(existing) as typeof transaction[]) : [];
-      await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify([transaction, ...list]));
-
+      const list = existing ? (JSON.parse(existing) as RecordedTransaction[]) : [];
+      const nextTransactions = isEditing
+        ? list.map((stored) =>
+            stored.id === transaction.id ? transaction : stored,
+          )
+        : [transaction, ...list];
+      await AsyncStorage.setItem(
+        TRANSACTIONS_KEY,
+        JSON.stringify(nextTransactions),
+      );
     } catch {
       // silently continue — don't block navigation on storage failure
     }
-    router.replace("/?recorded=1");
+    router.replace(isEditing ? "/?recorded=saved" : "/?recorded=1");
+  }
+
+  async function handleDelete() {
+    if (!transactionId) return;
+
+    try {
+      const existing = await AsyncStorage.getItem(TRANSACTIONS_KEY);
+      const list = existing ? (JSON.parse(existing) as RecordedTransaction[]) : [];
+      await AsyncStorage.setItem(
+        TRANSACTIONS_KEY,
+        JSON.stringify(list.filter((stored) => stored.id !== transactionId)),
+      );
+    } catch {
+      // Keep navigation reliable even if local persistence fails.
+    }
+    router.replace({
+      pathname: "/",
+      params: { deletedType: transactionType, recorded: "deleted" },
+    });
   }
 
   return (
@@ -3330,15 +3474,29 @@ export default function AddEntryScreen() {
       <StatusBar style="dark" />
 
       <View style={styles.header}>
-        <Pressable
-          accessibilityLabel="Close add entry"
-          accessibilityRole="button"
-          hitSlop={10}
-          onPress={() => router.back()}
-          style={styles.closeButton}
-        >
-          <CloseIcon />
-        </Pressable>
+        <View style={styles.headerTopRow}>
+          <Pressable
+            accessibilityLabel="Close add entry"
+            accessibilityRole="button"
+            hitSlop={10}
+            onPress={() => router.back()}
+            style={styles.closeButton}
+          >
+            <CloseIcon />
+          </Pressable>
+
+          {isEditing ? (
+            <Pressable
+              accessibilityLabel="Delete transaction"
+              accessibilityRole="button"
+              hitSlop={10}
+              onPress={handleDelete}
+              style={styles.deleteButton}
+            >
+              <TrashIcon />
+            </Pressable>
+          ) : null}
+        </View>
 
         <View style={styles.tabSwitcher}>
           {transactionTabs.map((tab) => {
@@ -3373,27 +3531,71 @@ export default function AddEntryScreen() {
           >
             {amountLabel}
           </SentencePill>
-          <Text style={styles.sentenceWord}>on</Text>
-          <DescriptionInput
-            onChangeText={setDescription}
-            value={description}
-          />
-          <Text style={styles.sentenceWord}>as</Text>
-          <SentencePill
-            onPress={() => setIsCategoryPickerOpen(true)}
-            variant={selectedCategory ? "filled" : "default"}
-          >
-            {selectedCategory
-              ? `${selectedCategory.emoji} ${selectedCategory.name}`
-              : "e.g 🍜 food"}
-          </SentencePill>
-          <Text style={styles.sentenceWord}>from</Text>
-          <SentencePill
-            onPress={() => setIsAccountPickerOpen(true)}
-            variant={selectedAccount ? "filled" : "default"}
-          >
-            {selectedAccount ? selectedAccount.name : "e.g cash wallet"}
-          </SentencePill>
+
+          {isTransfer ? (
+            <>
+              <Text style={styles.sentenceWord}>from</Text>
+              <SentencePill
+                onPress={() => setIsAccountPickerOpen(true)}
+                variant={selectedAccount ? "filled" : "default"}
+              >
+                {selectedAccount?.name ?? "e.g checking account"}
+              </SentencePill>
+              <Text style={styles.sentenceWord}>to</Text>
+              <SentencePill
+                onPress={() => setIsDestinationAccountPickerOpen(true)}
+                variant={transferDestinationAccount ? "filled" : "default"}
+              >
+                {transferDestinationAccount?.name ?? "e.g joint account"}
+              </SentencePill>
+              <Text style={styles.sentenceWord}>for</Text>
+              <DescriptionInput
+                onChangeText={setDescription}
+                placeholder="e.g rent share"
+                value={description}
+              />
+            </>
+          ) : (
+            <>
+              <Text style={styles.sentenceWord}>
+                {transactionType === "income" ? "for" : "on"}
+              </Text>
+              <DescriptionInput
+                onChangeText={setDescription}
+                placeholder={
+                  transactionType === "income"
+                    ? "e.g logo design"
+                    : "e.g Nike"
+                }
+                value={description}
+              />
+              <Text style={styles.sentenceWord}>as</Text>
+              <SentencePill
+                onPress={() => setIsCategoryPickerOpen(true)}
+                variant={selectedCategory ? "filled" : "default"}
+              >
+                {selectedCategory
+                  ? `${selectedCategory.emoji} ${selectedCategory.name}`
+                  : transactionType === "income"
+                    ? "e.g 💻 freelance"
+                    : "e.g 🧥 apparel"}
+              </SentencePill>
+              <Text style={styles.sentenceWord}>
+                {transactionType === "income" ? "into" : "from"}
+              </Text>
+              <SentencePill
+                onPress={() => setIsAccountPickerOpen(true)}
+                variant={selectedAccount ? "filled" : "default"}
+              >
+                {selectedAccount
+                  ? selectedAccount.name
+                  : transactionType === "income"
+                    ? "e.g bank account"
+                    : "e.g cash wallet"}
+              </SentencePill>
+            </>
+          )}
+
           <Text style={styles.sentenceWord}>on</Text>
           <SentencePill onPress={() => setIsDatePickerOpen(true)} variant="accent">
             {`🗓️ ${format(selectedDate, "d MMMM yyyy")}`}
@@ -3461,18 +3663,18 @@ export default function AddEntryScreen() {
       <View style={[styles.footer, { paddingBottom: insets.bottom + 4 }]}>
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: !hasAmount }}
-          disabled={!hasAmount}
+          accessibilityState={{ disabled: !canRecord }}
+          disabled={!canRecord}
           onPress={handleRecord}
           style={[
             styles.recordButton,
-            hasAmount && styles.recordButtonEnabled,
+            canRecord && styles.recordButtonEnabled,
           ]}
         >
           <Text
             style={[
               styles.recordButtonText,
-              hasAmount && styles.recordButtonTextEnabled,
+              canRecord && styles.recordButtonTextEnabled,
             ]}
           >
             {recordLabel}
@@ -3490,6 +3692,7 @@ export default function AddEntryScreen() {
       />
 
       <CategoryPickerSheet
+        type={transactionType === "income" ? "income" : "expense"}
         onClose={() => setIsCategoryPickerOpen(false)}
         onSelectCategory={setSelectedCategory}
         selectedCategory={selectedCategory}
@@ -3497,7 +3700,7 @@ export default function AddEntryScreen() {
       />
 
       <AccountPickerSheet
-        accounts={displayAccounts}
+        accounts={displayAccounts.filter((a) => !hiddenAccountIdSet.has(a.id))}
         onClose={() => setIsAccountPickerOpen(false)}
         onEditAccounts={() => {
           setIsAccountPickerOpen(false);
@@ -3507,43 +3710,45 @@ export default function AddEntryScreen() {
           setIsAccountPickerOpen(false);
           setIsCreateAccountOpen(true);
         }}
-        onSelectAccount={setSelectedAccount}
+        onSelectAccount={(account) => {
+          setSelectedAccount(account);
+          if (transferDestinationAccount?.id === account.id) {
+            setTransferDestinationAccount(null);
+          }
+        }}
         selectedAccount={selectedAccount}
         visible={isAccountPickerOpen}
+      />
+
+      <AccountPickerSheet
+        accounts={displayAccounts.filter(
+          (account) => !hiddenAccountIdSet.has(account.id) && account.id !== selectedAccount?.id,
+        )}
+        onClose={() => setIsDestinationAccountPickerOpen(false)}
+        onEditAccounts={() => {
+          setIsDestinationAccountPickerOpen(false);
+          setIsAccountsEditOpen(true);
+        }}
+        onNewAccount={() => {
+          setIsDestinationAccountPickerOpen(false);
+          setIsCreateAccountOpen(true);
+        }}
+        onSelectAccount={setTransferDestinationAccount}
+        selectedAccount={transferDestinationAccount}
+        visible={isDestinationAccountPickerOpen}
       />
 
       <AccountsBottomSheet
         groups={groupAccounts(displayAccounts)}
         onClose={() => setIsAccountsEditOpen(false)}
         onEditBalance={handleOpenEditBalance}
-        onMoveAccountToGroup={(accountId, toGroup, atIndex) => {
-          setLocalAccounts((prev) => {
-            const account = prev.find((a) => a.id === accountId);
-            if (!account) return prev;
-            const updated = { ...account, group: toGroup };
-            const withoutAccount = prev.filter((a) => a.id !== accountId);
-            const targetGroupItems = withoutAccount.filter((a) => a.group === toGroup);
-            if (atIndex >= targetGroupItems.length) {
-              const lastIdx = withoutAccount.reduce((li, a, i) => (a.group === toGroup ? i : li), -1);
-              const result = [...withoutAccount];
-              result.splice(lastIdx + 1, 0, updated);
-              return result;
-            }
-            const insertBeforeId = targetGroupItems[atIndex].id;
-            const insertIdx = withoutAccount.findIndex((a) => a.id === insertBeforeId);
-            const result = [...withoutAccount];
-            result.splice(insertIdx, 0, updated);
-            return result;
-          });
-        }}
+        onMoveAccountToGroup={(accountId, toGroup, atIndex) => moveToGroup(accountId, toGroup, atIndex)}
         onNewAccount={() => {
           setIsAccountsEditOpen(false);
           setIsCreateAccountOpen(true);
         }}
-        onRemoveAccount={(id) => setLocalAccounts((prev) => prev.filter((a) => a.id !== id))}
-        onReorderAccounts={(group, ids) =>
-          setLocalAccounts((prev) => reorderAccountsInGroup(prev, group, ids))
-        }
+        onRemoveAccount={(id) => storeRemoveAccount(id)}
+        onReorderAccounts={(group, ids) => reorderInGroup(group, ids)}
         onSelectAccount={(account) => {
           setSelectedAccount(account);
           setIsAccountsEditOpen(false);
@@ -3566,14 +3771,13 @@ export default function AddEntryScreen() {
         onClose={() => setIsCreateAccountOpen(false)}
         onSubmit={(values) => {
           const openingCents = Math.round(values.balance * 100);
-          const account: Account = {
+          storeAddAccount({
             id: Date.now().toString(36),
             name: values.name,
             group: values.groupId,
-            balanceCents: openingCents,
             openingBalanceCents: openingCents,
-          };
-          setLocalAccounts((prev) => [...prev, account]);
+            currencyCode: values.currencyCode,
+          });
           setIsCreateAccountOpen(false);
         }}
         selectedCurrency={selectedCurrency}
@@ -3631,9 +3835,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
   },
+  headerTopRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
   closeButton: {
     alignItems: "center",
     backgroundColor: figmaColors.grayNeutral["100"],
+    borderRadius: 999,
+    height: 32,
+    justifyContent: "center",
+    width: 32,
+  },
+  deleteButton: {
+    alignItems: "center",
+    backgroundColor: figmaColors.error["100"],
     borderRadius: 999,
     height: 32,
     justifyContent: "center",
@@ -3733,12 +3950,12 @@ const styles = StyleSheet.create({
     top: 0,
   },
   amountSheetBackdrop: {
-    backgroundColor: figmaColors.base.overlay,
     flex: 1,
     justifyContent: "flex-end",
   },
-  amountSheetDismissArea: {
-    flex: 1,
+  amountSheetOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: figmaColors.base.overlay,
   },
   amountSheet: {
     backgroundColor: figmaColors.bg,
@@ -4232,6 +4449,45 @@ const styles = StyleSheet.create({
   categoryChipTextSelected: {
     color: figmaColors.base.white,
   },
+  accountsEmptyState: {
+    alignItems: "center",
+    gap: 8,
+    paddingBottom: 32,
+    paddingHorizontal: 24,
+    paddingTop: 40,
+  },
+  accountsEmptyTitle: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 20,
+    letterSpacing: -0.3,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  accountsEmptySubtitle: {
+    color: figmaColors.grayNeutral["500"],
+    fontFamily: fontFamily.regular,
+    fontSize: 15,
+    letterSpacing: -0.15,
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  accountsEmptyButton: {
+    alignItems: "center",
+    backgroundColor: figmaColors.grayNeutral["900"],
+    borderRadius: 999,
+    height: 52,
+    justifyContent: "center",
+    marginTop: 16,
+    paddingHorizontal: 32,
+    width: "100%",
+  },
+  accountsEmptyButtonText: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.semiBold,
+    fontSize: 16,
+    letterSpacing: -0.2,
+  },
   categoryList: {
     paddingBottom: 8,
   },
@@ -4295,11 +4551,6 @@ const styles = StyleSheet.create({
   emojiPreviewText: {
     fontSize: 44,
     lineHeight: 52,
-  },
-  hiddenEmojiInput: {
-    height: 0,
-    opacity: 0,
-    width: 0,
   },
   newCategoryNameRow: {
     alignItems: "center",

@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { format, getDay, getDaysInMonth, startOfMonth } from "date-fns";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import * as Haptics from "expo-haptics";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import {
   useCallback,
@@ -26,19 +27,40 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Reanimated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
 import Svg, { Circle, ClipPath, Defs, G, Path, Rect } from "react-native-svg";
 
 import { figmaColors } from "@/constants/colors";
 import { fontFamily } from "@/constants/typography";
+import { useUIStore } from "@/stores/ui";
 
 const HOME_CURRENCY_KEY = "europa:home-currency";
+const WEEK_START_KEY = "europa:week-start";
+
+const WEEK_DAY_LABELS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+const WEEK_DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TRANSACTIONS_KEY = "europa:transactions";
 const SPLASH_DURATION_MS = 2500;
 const SHEET_CLOSE_DISTANCE = 120;
+const SWIPE_DELETE_REVEAL_WIDTH = 64;
+const SWIPE_PARTIAL_REVEAL_PERCENT = 0.25;
+const SWIPE_FULL_DELETE_PERCENT = 0.45;
+const SWIPE_FULL_DELETE_FLING_VELOCITY = -1_200;
+
+function triggerDeleteThresholdHaptic() {
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+}
 
 const rateCache: Record<string, { rates: Record<string, number>; ts: number }> = {};
 
-async function fetchExchangeRates(base: string): Promise<Record<string, number>> {
+export async function fetchExchangeRates(base: string): Promise<Record<string, number>> {
   const cached = rateCache[base];
   if (cached && Date.now() - cached.ts < 3_600_000) return cached.rates;
   const res = await fetch(`https://open.er-api.com/v6/latest/${base}`);
@@ -47,7 +69,7 @@ async function fetchExchangeRates(base: string): Promise<Record<string, number>>
   return json.rates;
 }
 
-function convertCents(cents: number, fromCode: string, toCode: string, rates: Record<string, number>): number {
+export function convertCents(cents: number, fromCode: string, toCode: string, rates: Record<string, number>): number {
   if (fromCode === toCode || !rates[fromCode]) return cents;
   return Math.round((cents / rates[fromCode]) * rates[toCode]);
 }
@@ -61,6 +83,7 @@ type Transaction = {
   categoryName: string;
   categoryColor?: string;
   accountName: string;
+  destinationAccountName?: string;
   date: string;
   currencyCode: string;
   recurringOption: string;
@@ -72,6 +95,13 @@ type DayGroup = {
   date: Date;
   transactions: Transaction[];
   netCents: number;
+};
+
+type PendingDeletion = {
+  dateSection: string;
+  id: number;
+  originalIndex: number;
+  transaction: Transaction;
 };
 
 const DEFAULT_CATEGORY_COLORS: Record<string, string> = {
@@ -90,6 +120,15 @@ const DEFAULT_CATEGORY_COLORS: Record<string, string> = {
   Loan: "#64748b",
   Airtime: "#0ea5e9",
   Subscription: "#10b981",
+  Allowance: "#ef4444",
+  Salary: "#3b82f6",
+  Freelance: "#f97316",
+  "Petty cash": "#22c55e",
+  Gifts: "#f59e0b",
+  Refunds: "#8b5cf6",
+  Investments: "#06b6d4",
+  Bonus: "#ec4899",
+  Sales: "#14b8a6",
   Other: "#6b7280",
 };
 
@@ -246,7 +285,7 @@ const homeTabs: HomeTab[] = [
   { icon: "settings-1-line", label: "Settings" },
 ];
 
-const calendarDayLabels = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+// day labels are generated dynamically from weekStartIndex
 const monthPickerStartYear = 2016;
 const monthPickerEndYear = 2035;
 
@@ -263,20 +302,37 @@ function formatMonthYearLabel(date: Date) {
   return format(date, "MMM yyyy");
 }
 
-function getCalendarDays(year: number, month: number) {
+function localDateKey(isoString: string): string {
+  const d = new Date(isoString);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function localDateFromKey(key: string): Date {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function getCalendarDays(year: number, month: number, weekStartIndex = 1) {
   const firstDayOfMonth = startOfMonth(new Date(year, month, 1));
-  const leadingEmptyDays = (getDay(firstDayOfMonth) + 6) % 7;
+  const leadingEmptyDays = (getDay(firstDayOfMonth) - weekStartIndex + 7) % 7;
   const daysInMonth = getDaysInMonth(firstDayOfMonth);
   const calendarDays: (number | null)[] = [
     ...Array.from({ length: leadingEmptyDays }, () => null),
     ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
   ];
 
-  while (calendarDays.length < 35) {
+  while (calendarDays.length % 7 !== 0) {
     calendarDays.push(null);
   }
 
-  return calendarDays.slice(0, 35);
+  return calendarDays;
+}
+
+function getCalendarDayLabels(weekStartIndex: number) {
+  return Array.from({ length: 7 }, (_, i) => WEEK_DAY_LABELS[(weekStartIndex + i) % 7]);
 }
 
 const mingCuteIcons: Record<
@@ -355,10 +411,13 @@ function formatSelectedCurrencyName(name: string) {
 }
 
 let appSplashDone = false;
+let cachedHomeCurrency: Currency | null = null;
+let cachedWeekStartIndex = 1; // Monday default
 
 export default function AppEntryScreen() {
   const [isShowingSplash, setIsShowingSplash] = useState(!appSplashDone);
-  const [homeCurrency, setHomeCurrency] = useState<Currency | null>(null);
+  const [homeCurrency, setHomeCurrency] = useState<Currency | null>(cachedHomeCurrency);
+  const [weekStartIndex, setWeekStartIndex] = useState(cachedWeekStartIndex);
 
   useEffect(() => {
     let isMounted = true;
@@ -369,18 +428,28 @@ export default function AppEntryScreen() {
       )
       .catch(() => null);
 
+    const weekStartLoad = AsyncStorage.getItem(WEEK_START_KEY)
+      .then((day) => (day ? WEEK_DAY_NAMES.indexOf(day) : -1))
+      .catch(() => -1);
+
     if (appSplashDone) {
-      currencyLoad.then((currency) => {
-        if (isMounted) setHomeCurrency(currency);
+      Promise.all([currencyLoad, weekStartLoad]).then(([currency, idx]) => {
+        if (isMounted) {
+          cachedHomeCurrency = currency;
+          setHomeCurrency(currency);
+          if (idx >= 0) { cachedWeekStartIndex = idx; setWeekStartIndex(idx); }
+        }
       });
     } else {
       const splashTimer = new Promise<void>((resolve) =>
         setTimeout(resolve, SPLASH_DURATION_MS),
       );
-      Promise.all([splashTimer, currencyLoad]).then(([, currency]) => {
+      Promise.all([splashTimer, currencyLoad, weekStartLoad]).then(([, currency, idx]) => {
         if (isMounted) {
           appSplashDone = true;
+          cachedHomeCurrency = currency;
           setHomeCurrency(currency);
+          if (idx >= 0) { cachedWeekStartIndex = idx; setWeekStartIndex(idx); }
           setIsShowingSplash(false);
         }
       });
@@ -391,7 +460,48 @@ export default function AppEntryScreen() {
     };
   }, []);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (!appSplashDone) return;
+
+      if (useUIStore.getState().shouldResetOnboarding) {
+        useUIStore.getState().setShouldResetOnboarding(false);
+        cachedHomeCurrency = null;
+        appSplashDone = false;
+        setIsShowingSplash(true);
+        const t = setTimeout(() => {
+          appSplashDone = true;
+          setIsShowingSplash(false);
+          setHomeCurrency(null);
+        }, SPLASH_DURATION_MS);
+        return () => clearTimeout(t);
+      }
+
+      AsyncStorage.getItem(HOME_CURRENCY_KEY)
+        .then((code) => {
+          if (!code) return;
+          const found = currencies.find((c) => c.code === code);
+          if (found && found.code !== cachedHomeCurrency?.code) {
+            cachedHomeCurrency = found;
+            setHomeCurrency(found);
+          }
+        })
+        .catch(() => {});
+      AsyncStorage.getItem(WEEK_START_KEY)
+        .then((day) => {
+          if (!day) return;
+          const idx = WEEK_DAY_NAMES.indexOf(day);
+          if (idx >= 0 && idx !== cachedWeekStartIndex) {
+            cachedWeekStartIndex = idx;
+            setWeekStartIndex(idx);
+          }
+        })
+        .catch(() => {});
+    }, []),
+  );
+
   const handleCurrencySelected = useCallback((currency: Currency) => {
+    cachedHomeCurrency = currency;
     setHomeCurrency(currency);
     AsyncStorage.setItem(HOME_CURRENCY_KEY, currency.code).catch(() => {});
   }, []);
@@ -401,21 +511,33 @@ export default function AppEntryScreen() {
   }
 
   if (homeCurrency) {
-    return <HomeEmptyListScreen currency={homeCurrency} />;
+    return <HomeEmptyListScreen currency={homeCurrency} weekStartIndex={weekStartIndex} />;
   }
 
   return <CurrencySetupContent onComplete={handleCurrencySelected} />;
+}
+
+function EuropaGlobeIcon() {
+  return (
+    <Svg fill="none" height={40} viewBox="0 0 40 40" width={40}>
+      <Path d="M28.6544 35.168C28.0505 36.5084 27.2998 37.8211 26.3997 38.9568C33.867 36.4431 39.364 29.6514 39.9691 21.5H37.311C34.0671 21.5 31.4614 24.0861 30.9341 27.2829C30.448 30.2297 29.6704 32.913 28.6544 35.168Z" fill="#fff" />
+      <Path d="M22.7749 21.5C26.1713 21.5 28.9495 24.3299 28.3257 27.6643C26.9708 34.9067 23.7534 40 20 40C15.2507 40 11.3595 31.8451 11.0139 21.5H22.7749Z" fill="#fff" />
+      <Path d="M31.0031 13.1502C31.4998 16.3769 34.1176 19 37.3862 19H40C39.5872 10.6271 34.0192 3.60817 26.3997 1.04317C27.2998 2.17892 28.0505 3.4916 28.6544 4.83195C29.72 7.19699 30.5233 10.0331 31.0031 13.1502Z" fill="#fff" />
+      <Path d="M28.426 12.8957C28.9942 16.2133 26.2279 19 22.858 19H11C11.2348 8.41889 15.1744 0 20 0C23.8494 0 27.135 5.35721 28.426 12.8957Z" fill="#fff" />
+      <Path d="M8.49635 19C8.61009 13.5917 9.64313 8.61059 11.3456 4.83195C11.9495 3.4916 12.7002 2.17892 13.6003 1.04317C5.98085 3.60817 0.4128 10.6271 0 19H8.49635Z" fill="#fff" />
+      <Path d="M0.0308759 21.5C0.636018 29.6514 6.13302 36.4431 13.6003 38.9568C12.7002 37.8211 11.9495 36.5084 11.3456 35.168C9.69572 31.5061 8.67455 26.7149 8.50952 21.5H0.0308759Z" fill="#fff" />
+    </Svg>
+  );
 }
 
 function FirstLaunchSplashScreen() {
   return (
     <View style={styles.introSplash}>
       <StatusBar style="light" />
-      <Image
-        resizeMode="contain"
-        source={require("../assets/images/splash-screen-logo.png")}
-        style={styles.introLogo}
-      />
+      <View style={styles.introLogoRow}>
+        <EuropaGlobeIcon />
+        <Text style={styles.introLogoText}>Europa</Text>
+      </View>
     </View>
   );
 }
@@ -506,15 +628,22 @@ function CurrencySetupContent({
   );
 }
 
-function HomeEmptyListScreen({ currency }: { currency: Currency }) {
+function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency; weekStartIndex: number }) {
   const router = useRouter();
-  const { recorded } = useLocalSearchParams<{ recorded?: string }>();
+  const { deletedType, recorded } = useLocalSearchParams<{
+    deletedType?: Transaction["type"];
+    recorded?: string;
+  }>();
   const [isCalendarView, setIsCalendarView] = useState(false);
   const [isMonthYearPickerOpen, setIsMonthYearPickerOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => new Date());
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [tabBarHeight, setTabBarHeight] = useState(0);
   const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion | null>(
+    null,
+  );
   const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({});
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -538,13 +667,83 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
     loadTransactions().finally(() => setIsRefreshing(false));
   }, [loadTransactions]);
 
+  const handleDeleteTransaction = useCallback(
+    async (transaction: Transaction) => {
+      const originalIndex = transactions.findIndex(
+        (item) => item.id === transaction.id,
+      );
+      if (originalIndex < 0) return;
+
+      const nextTransactions = transactions.filter(
+        (item) => item.id !== transaction.id,
+      );
+      setTransactions(nextTransactions);
+      setPendingDeletion({
+        dateSection: transaction.date.slice(0, 10),
+        id: Date.now(),
+        originalIndex,
+        transaction,
+      });
+
+      try {
+        await AsyncStorage.setItem(
+          TRANSACTIONS_KEY,
+          JSON.stringify(nextTransactions),
+        );
+      } catch {
+        setTransactions(transactions);
+        setPendingDeletion(null);
+      }
+    },
+    [transactions],
+  );
+
+  const handleUndoDelete = useCallback(async () => {
+    if (!pendingDeletion) return;
+
+    const restoredTransactions = [
+      ...transactions.slice(0, pendingDeletion.originalIndex),
+      pendingDeletion.transaction,
+      ...transactions.slice(pendingDeletion.originalIndex),
+    ];
+    setTransactions(restoredTransactions);
+    setPendingDeletion(null);
+
+    try {
+      await AsyncStorage.setItem(
+        TRANSACTIONS_KEY,
+        JSON.stringify(restoredTransactions),
+      );
+    } catch {
+      setTransactions(transactions);
+    }
+  }, [pendingDeletion, transactions]);
+
   useEffect(() => {
-    if (recorded === "1") {
+    if (recorded === "1" || recorded === "deleted" || recorded === "saved") {
       setShowToast(true);
       const t = setTimeout(() => setShowToast(false), 3000);
       return () => clearTimeout(t);
     }
-  }, [recorded]);
+  }, [deletedType, recorded]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const msg = useUIStore.getState().pendingToast;
+      if (!msg) return;
+      useUIStore.getState().setPendingToast(null);
+      setToastMessage(msg);
+      setShowToast(true);
+      const t = setTimeout(() => setShowToast(false), 3000);
+      return () => clearTimeout(t);
+    }, []),
+  );
+
+  useEffect(() => {
+    if (!pendingDeletion) return;
+    const timeout = setTimeout(() => setPendingDeletion(null), 5000);
+    return () => clearTimeout(timeout);
+  }, [pendingDeletion]);
 
   useEffect(() => {
     const hasForeign = transactions.some((tx) => tx.currencyCode !== currency.code);
@@ -592,14 +791,14 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
   const dayGroups = useMemo<DayGroup[]>(() => {
     const map = new Map<string, Transaction[]>();
     for (const tx of monthTransactions) {
-      const key = tx.date.slice(0, 10);
+      const key = localDateKey(tx.date);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(tx);
     }
     return Array.from(map.entries())
       .map(([dateKey, txs]) => ({
         dateKey,
-        date: new Date(dateKey),
+        date: localDateFromKey(dateKey),
         transactions: txs,
         netCents: txs.reduce((s, tx) => {
           const cents = convertCents(tx.amountCents, tx.currencyCode, currency.code, exchangeRates);
@@ -711,6 +910,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
             exchangeRates={exchangeRates}
             monthTransactions={monthTransactions}
             selectedMonth={selectedMonth}
+            weekStartIndex={weekStartIndex}
           />
         </ScrollView>
       ) : monthTransactions.length === 0 ? (
@@ -741,6 +941,13 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
                   currencySymbol={currencySymbol}
                   exchangeRates={exchangeRates}
                   key={tx.id}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/add-entry",
+                      params: { transactionId: tx.id },
+                    })
+                  }
+                  onDelete={() => handleDeleteTransaction(tx)}
                   transaction={tx}
                 />
               ))}
@@ -766,7 +973,14 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
         {homeTabs.map((tab, index) => {
           const isActive = index === 0;
           return (
-            <View key={tab.label} style={styles.tabBarItem}>
+            <Pressable
+              key={tab.label}
+              onPress={() => {
+                if (tab.label === "Settings") router.push("/settings");
+                else if (tab.label === "Accounts") router.push("/accounts");
+              }}
+              style={styles.tabBarItem}
+            >
               <MingCuteIcon
                 color={isActive ? figmaColors.blue["500"] : figmaColors.grayNeutral["400"]}
                 name={tab.icon}
@@ -775,7 +989,7 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
               <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
                 {tab.label}
               </Text>
-            </View>
+            </Pressable>
           );
         })}
       </View>
@@ -790,13 +1004,21 @@ function HomeEmptyListScreen({ currency }: { currency: Currency }) {
       <ToastNotification
         bottomOffset={tabBarHeight + 8}
         message={
-          transactions[0]?.type === "income"
-            ? "Your income has been recorded"
-            : transactions[0]?.type === "transfer"
-              ? "Your transfer has been recorded"
-              : "Your expense has been recorded"
+          toastMessage && !pendingDeletion && recorded !== "deleted" && recorded !== "1" && recorded !== "saved"
+            ? toastMessage
+            : pendingDeletion || recorded === "deleted"
+              ? `Your ${pendingDeletion?.transaction.type ?? deletedType ?? "transaction"} has been deleted`
+              : recorded === "saved"
+                ? "Transaction saved"
+                : transactions[0]?.type === "income"
+                  ? "Your income has been recorded"
+                  : transactions[0]?.type === "transfer"
+                    ? "Your transfer has been recorded"
+                    : "Your expense has been recorded"
         }
-        visible={showToast}
+        onAction={pendingDeletion ? handleUndoDelete : undefined}
+        variant={pendingDeletion || recorded === "deleted" ? "destructive" : "default"}
+        visible={showToast || pendingDeletion !== null}
       />
 
       <SearchOverlay
@@ -833,6 +1055,7 @@ function SearchOverlay({
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -850,14 +1073,14 @@ function SearchOverlay({
       : [];
     const map = new Map<string, Transaction[]>();
     for (const tx of matched) {
-      const key = tx.date.slice(0, 10);
+      const key = localDateKey(tx.date);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(tx);
     }
     return Array.from(map.entries())
       .map(([dateKey, txs]) => ({
         dateKey,
-        date: new Date(dateKey),
+        date: localDateFromKey(dateKey),
         transactions: txs,
         netCents: txs.reduce((s, tx) => {
           const cents = convertCents(tx.amountCents, tx.currencyCode, currencyCode, exchangeRates);
@@ -937,6 +1160,12 @@ function SearchOverlay({
                   currencySymbol={currencySymbol}
                   exchangeRates={exchangeRates}
                   key={tx.id}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/add-entry",
+                      params: { transactionId: tx.id },
+                    })
+                  }
                   transaction={tx}
                 />
               ))}
@@ -985,11 +1214,15 @@ function TransactionRow({
   currencyCode,
   currencySymbol,
   exchangeRates,
+  onDelete,
+  onPress,
   transaction,
 }: {
   currencyCode: string;
   currencySymbol: string;
   exchangeRates: Record<string, number>;
+  onDelete?: () => void;
+  onPress: () => void;
   transaction: Transaction;
 }) {
   const isIncome = transaction.type === "income";
@@ -1003,23 +1236,181 @@ function TransactionRow({
   const bgColor = transaction.categoryColor ?? categoryColor(transaction.categoryName);
   const title = transaction.description.trim() || transaction.categoryName;
   const displayCents = convertCents(transaction.amountCents, transaction.currencyCode, currencyCode, exchangeRates);
+  const [isDeleteActionExposed, setIsDeleteActionExposed] = useState(false);
+  const rowWidth = useSharedValue(0);
+  const rowHeight = useSharedValue(-1);
+  const translateX = useSharedValue(0);
+  const containerOpacity = useSharedValue(1);
+  const swipeStartX = useSharedValue(0);
+  const thresholdHapticTriggered = useSharedValue(false);
+  const deleteScalePop = useSharedValue(1);
+
+  const closeDeleteAction = useCallback(() => {
+    translateX.value = withSpring(0, { damping: 20, stiffness: 220 });
+    setIsDeleteActionExposed(false);
+  }, [translateX]);
+
+  const completeDeletion = useCallback(() => {
+    if (!onDelete) return;
+
+    setIsDeleteActionExposed(false);
+    translateX.value = withTiming(-rowWidth.value, { duration: 180 }, (finished) => {
+      if (!finished) return;
+      containerOpacity.value = withTiming(0, { duration: 120 });
+      rowHeight.value = withTiming(0, { duration: 200 }, (collapsed) => {
+        if (collapsed) runOnJS(onDelete)();
+      });
+    });
+  }, [containerOpacity, onDelete, rowHeight, rowWidth, translateX]);
+
+  const handlePress = useCallback(() => {
+    if (isDeleteActionExposed) {
+      closeDeleteAction();
+      return;
+    }
+    onPress();
+  }, [closeDeleteAction, isDeleteActionExposed, onPress]);
+
+  const handleRowLayout = useCallback(
+    (event: { nativeEvent: { layout: { height: number; width: number } } }) => {
+      rowWidth.value = event.nativeEvent.layout.width;
+      if (rowHeight.value < 0) {
+        rowHeight.value = event.nativeEvent.layout.height;
+      }
+    },
+    [rowHeight, rowWidth],
+  );
+
+  const panGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(Boolean(onDelete))
+        .activeOffsetX(-10)
+        .failOffsetY([-12, 12])
+        .onBegin(() => {
+          swipeStartX.value = translateX.value;
+          thresholdHapticTriggered.value = false;
+          deleteScalePop.value = 1;
+        })
+        .onUpdate((event) => {
+          const nextX = Math.min(
+            0,
+            Math.max(-rowWidth.value, swipeStartX.value + event.translationX),
+          );
+          translateX.value = nextX;
+
+          const fullDeleteThreshold = rowWidth.value * SWIPE_FULL_DELETE_PERCENT;
+          const isPastThreshold = -nextX >= fullDeleteThreshold;
+
+          if (isPastThreshold && !thresholdHapticTriggered.value) {
+            thresholdHapticTriggered.value = true;
+            deleteScalePop.value = withSpring(1.18, { damping: 10, stiffness: 380 });
+            runOnJS(triggerDeleteThresholdHaptic)();
+          } else if (!isPastThreshold && thresholdHapticTriggered.value) {
+            thresholdHapticTriggered.value = false;
+            deleteScalePop.value = withSpring(1, { damping: 15, stiffness: 300 });
+          }
+        })
+        .onEnd((event) => {
+          const partialRevealThreshold =
+            rowWidth.value * SWIPE_PARTIAL_REVEAL_PERCENT;
+          const fullDeleteThreshold =
+            rowWidth.value * SWIPE_FULL_DELETE_PERCENT;
+          const shouldDelete =
+            -translateX.value >= fullDeleteThreshold ||
+            event.velocityX <= SWIPE_FULL_DELETE_FLING_VELOCITY;
+
+          if (shouldDelete) {
+            runOnJS(completeDeletion)();
+            return;
+          }
+
+          if (-translateX.value >= partialRevealThreshold) {
+            translateX.value = withSpring(-SWIPE_DELETE_REVEAL_WIDTH, {
+              damping: 20,
+              stiffness: 220,
+            });
+            runOnJS(setIsDeleteActionExposed)(true);
+            return;
+          }
+
+          translateX.value = withSpring(0, { damping: 20, stiffness: 220 });
+          deleteScalePop.value = withSpring(1, { damping: 15, stiffness: 300 });
+          runOnJS(setIsDeleteActionExposed)(false);
+        })
+        .onFinalize(() => {
+          if (translateX.value === 0) {
+            runOnJS(setIsDeleteActionExposed)(false);
+          }
+        }),
+    [
+      completeDeletion,
+      deleteScalePop,
+      rowWidth,
+      swipeStartX,
+      thresholdHapticTriggered,
+      translateX,
+    ],
+  );
+
+  const rowStyle = useAnimatedStyle(() => ({
+    height: rowHeight.value > 0 ? rowHeight.value : undefined,
+    opacity: containerOpacity.value,
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  const deleteActionStyle = useAnimatedStyle(() => {
+    const fullDeleteThreshold =
+      rowWidth.value * SWIPE_FULL_DELETE_PERCENT || 1;
+    const progress = Math.min(1, Math.max(0, -translateX.value / fullDeleteThreshold));
+    return {
+      opacity: containerOpacity.value * (0.35 + progress * 0.65),
+      transform: [{ scale: (0.84 + progress * 0.16) * deleteScalePop.value }],
+    };
+  });
 
   return (
-    <View style={styles.txRow}>
-      <View style={[styles.txIconCircle, { backgroundColor: bgColor }]}>
-        <Text style={styles.txEmoji}>
-          {transaction.categoryEmoji || "💰"}
-        </Text>
-      </View>
-      <View style={styles.txMeta}>
-        <Text numberOfLines={1} style={styles.txTitle}>{title}</Text>
-        <Text numberOfLines={1} style={styles.txAccount}>
-          {transaction.accountName}
-        </Text>
-      </View>
-      <Text style={[styles.txAmount, { color: amountColor }]}>
-        {prefix}{formatCents(displayCents, currencySymbol)}
-      </Text>
+    <View style={styles.txSwipeRow}>
+      {onDelete ? (
+        <Reanimated.View style={[styles.txDeleteReveal, deleteActionStyle]}>
+          <Pressable
+            accessibilityLabel={`Delete ${title}`}
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={completeDeletion}
+            style={styles.txDeleteButton}
+          >
+            <TrashIcon color={figmaColors.error["500"]} />
+          </Pressable>
+        </Reanimated.View>
+      ) : null}
+      <GestureDetector gesture={panGesture}>
+        <Reanimated.View onLayout={handleRowLayout} style={rowStyle}>
+          <Pressable
+            accessibilityLabel={`Edit ${title}`}
+            accessibilityRole="button"
+            onPress={handlePress}
+            style={styles.txRow}
+          >
+            <View style={[styles.txIconCircle, { backgroundColor: bgColor }]}>
+              <Text style={styles.txEmoji}>
+                {transaction.categoryEmoji || "💰"}
+              </Text>
+            </View>
+            <View style={styles.txMeta}>
+              <Text numberOfLines={1} style={styles.txTitle}>{title}</Text>
+              <Text numberOfLines={1} style={styles.txAccount}>
+                {isTransfer && transaction.destinationAccountName
+                  ? `${transaction.accountName} → ${transaction.destinationAccountName}`
+                  : transaction.accountName}
+              </Text>
+            </View>
+            <Text style={[styles.txAmount, { color: amountColor }]}>
+              {prefix}{formatCents(displayCents, currencySymbol)}
+            </Text>
+          </Pressable>
+        </Reanimated.View>
+      </GestureDetector>
     </View>
   );
 }
@@ -1039,13 +1430,28 @@ function ToastCheckIcon() {
   );
 }
 
+function TrashIcon({ color }: { color: string }) {
+  return (
+    <Svg fill="none" height={16} viewBox="0 0 24 24" width={16}>
+      <Path
+        d="M14.28 2a2 2 0 0 1 1.897 1.368L16.72 5H20a1 1 0 1 1 0 2l-.003.071-.867 12.143A3 3 0 0 1 16.138 22H7.862a3 3 0 0 1-2.992-2.786L4.003 7.07A1.01 1.01 0 0 1 4 7a1 1 0 0 1 0-2h3.28l.543-1.632A2 2 0 0 1 9.721 2zM9 10a1 1 0 0 0-.993.883L8 11v6a1 1 0 0 0 1.993.117L10 17v-6a1 1 0 0 0-1-1m6 0a1 1 0 0 0-1 1v6a1 1 0 1 0 2 0v-6a1 1 0 0 0-1-1m-.72-6H9.72l-.333 1h5.226z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
 function ToastNotification({
   bottomOffset,
   message,
+  onAction,
+  variant = "default",
   visible,
 }: {
   bottomOffset: number;
   message: string;
+  onAction?: () => void;
+  variant?: "default" | "destructive";
   visible: boolean;
 }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -1067,14 +1473,29 @@ function ToastNotification({
 
   return (
     <Animated.View
-      pointerEvents="none"
+      pointerEvents={onAction ? "auto" : "none"}
       style={[
         styles.toast,
+        variant === "destructive" ? styles.toastDestructive : null,
         { bottom: bottomOffset, opacity, transform: [{ translateY }] },
       ]}
     >
-      <ToastCheckIcon />
+      {variant === "destructive" ? (
+        <TrashIcon color={figmaColors.base.white} />
+      ) : (
+        <ToastCheckIcon />
+      )}
       <Text style={styles.toastText}>{message}</Text>
+      {onAction ? (
+        <Pressable
+          accessibilityLabel="Undo transaction deletion"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={onAction}
+        >
+          <Text style={styles.toastActionText}>Undo</Text>
+        </Pressable>
+      ) : null}
     </Animated.View>
   );
 }
@@ -1091,17 +1512,21 @@ function CalendarMonthGrid({
   exchangeRates,
   monthTransactions,
   selectedMonth,
+  weekStartIndex,
 }: {
   currencyCode: string;
   exchangeRates: Record<string, number>;
   monthTransactions: Transaction[];
   selectedMonth: Date;
+  weekStartIndex: number;
 }) {
   const calendarDays = getCalendarDays(
     selectedMonth.getFullYear(),
     selectedMonth.getMonth(),
+    weekStartIndex,
   );
-  const calendarRows = Array.from({ length: 5 }, (_, rowIndex) =>
+  const calendarDayLabels = getCalendarDayLabels(weekStartIndex);
+  const calendarRows = Array.from({ length: calendarDays.length / 7 }, (_, rowIndex) =>
     calendarDays.slice(rowIndex * 7, rowIndex * 7 + 7),
   );
 
@@ -1410,33 +1835,25 @@ function MonthYearPicker({
 
 export function CurrencyPicker({
   onClose,
-  onDismiss,
   onSelectCurrency,
   visible,
 }: {
   onClose: () => void;
-  onDismiss?: () => void;
   onSelectCurrency: (currency: Currency) => void;
   visible: boolean;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const translateY = useRef(new Animated.Value(500)).current;
+  const [mounted, setMounted] = useState(false);
+  const translateY = useRef(new Animated.Value(600)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
 
   const closeSheet = useCallback(() => {
     Animated.parallel([
-      Animated.timing(translateY, {
-        duration: 220,
-        toValue: 600,
-        useNativeDriver: true,
-      }),
-      Animated.timing(backdropOpacity, {
-        duration: 220,
-        toValue: 0,
-        useNativeDriver: true,
-      }),
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
     ]).start(({ finished }) => {
       if (finished) {
+        setMounted(false);
         onClose();
       }
     });
@@ -1473,7 +1890,6 @@ export function CurrencyPicker({
             closeSheet();
             return;
           }
-
           resetSheetPosition();
         },
         onPanResponderTerminate: resetSheetPosition,
@@ -1483,24 +1899,17 @@ export function CurrencyPicker({
 
   useEffect(() => {
     if (visible) {
+      setMounted(true);
       setSearchQuery("");
-      translateY.setValue(500);
+      translateY.setValue(600);
       Animated.parallel([
-        Animated.timing(backdropOpacity, {
-          duration: 300,
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-        Animated.spring(translateY, {
-          bounciness: 0,
-          speed: 18,
-          toValue: 0,
-          useNativeDriver: true,
-        }),
+        Animated.timing(backdropOpacity, { duration: 300, toValue: 1, useNativeDriver: true }),
+        Animated.spring(translateY, { bounciness: 0, speed: 18, toValue: 0, useNativeDriver: true }),
       ]).start();
     } else {
+      setMounted(false);
       backdropOpacity.setValue(0);
-      translateY.setValue(500);
+      translateY.setValue(600);
     }
   }, [backdropOpacity, translateY, visible]);
 
@@ -1513,100 +1922,96 @@ export function CurrencyPicker({
       )
     : currencies;
 
+  if (!mounted) return null;
+
   return (
-    <Modal
-      animationType="none"
-      onDismiss={onDismiss}
-      onRequestClose={closeSheet}
-      visible={visible}
-    >
-      <View style={styles.pickerRoot}>
-        <StatusBar style="light" />
-        <Animated.View style={[styles.pickerBackdrop, { opacity: backdropOpacity }]} />
-        <SafeAreaView edges={["top"]} style={styles.pickerSafeArea}>
-          <Animated.View
-            style={[
-              styles.pickerSheetFrame,
-              { transform: [{ translateY }] },
-            ]}
-          >
-            <View style={styles.sheetTopShadow} />
-            <View style={styles.pickerSheet}>
-              <View
-                accessibilityLabel="Drag down to close currency picker"
-                accessibilityRole="adjustable"
-                style={styles.dragHandleArea}
-                {...panResponder.panHandlers}
+    <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+      <Animated.View
+        pointerEvents="box-none"
+        style={[styles.pickerBackdrop, { opacity: backdropOpacity }]}
+      >
+        <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
+      </Animated.View>
+      <SafeAreaView edges={["top"]} style={styles.pickerSafeArea}>
+        <Animated.View
+          style={[styles.pickerSheetFrame, { transform: [{ translateY }] }]}
+        >
+          <View style={styles.sheetTopShadow} />
+          <View style={styles.pickerSheet}>
+            <View
+              accessibilityLabel="Drag down to close currency picker"
+              accessibilityRole="adjustable"
+              style={styles.dragHandleArea}
+              {...panResponder.panHandlers}
+            >
+              <View style={styles.grabber} />
+            </View>
+
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle}>Pick a currency</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close currency picker"
+                hitSlop={12}
+                onPress={closeSheet}
+                style={styles.closeButton}
               >
-                <View style={styles.grabber} />
-              </View>
+                <MingCuteIcon
+                  color={figmaColors.grayNeutral["950"]}
+                  name="close-line"
+                  size={24}
+                />
+              </Pressable>
+            </View>
 
-              <View style={styles.pickerHeader}>
-                <Text style={styles.pickerTitle}>Pick a currency</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Close currency picker"
-                  hitSlop={12}
-                  onPress={closeSheet}
-                  style={styles.closeButton}
-                >
-                  <MingCuteIcon
-                    color={figmaColors.grayNeutral["950"]}
-                    name="close-line"
-                    size={24}
-                  />
-                </Pressable>
-              </View>
-
-              <View style={styles.searchContainer}>
-                <View style={styles.searchIcon}>
-                  <MingCuteIcon
-                    color={figmaColors.grayNeutral["400"]}
-                    name="search-line"
-                    size={20}
-                  />
-                </View>
-                <TextInput
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  cursorColor={figmaColors.grayNeutral["900"]}
-                  placeholder="Search for a currency/country"
-                  placeholderTextColor={figmaColors.grayNeutral["400"]}
-                  onChangeText={setSearchQuery}
-                  selectionColor={figmaColors.grayNeutral["900"]}
-                  style={styles.searchInput}
-                  value={searchQuery}
+            <View style={styles.searchContainer}>
+              <View style={styles.searchIcon}>
+                <MingCuteIcon
+                  color={figmaColors.grayNeutral["400"]}
+                  name="search-line"
+                  size={20}
                 />
               </View>
-
-              <Text style={styles.sectionLabel}>All currencies</Text>
-
-              <ScrollView
-                contentContainerStyle={styles.currencyList}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                {filteredCurrencies.map((currency) => (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`${currency.code}, ${currency.name}`}
-                    key={currency.code}
-                    onPress={() => onSelectCurrency(currency)}
-                    style={styles.currencyRow}
-                  >
-                    <CurrencyFlag flag={currency.flag} />
-                    <View style={styles.currencyTextGroup}>
-                      <Text style={styles.currencyCode}>{currency.code}</Text>
-                      <Text style={styles.currencyName}>{currency.name}</Text>
-                    </View>
-                  </Pressable>
-                ))}
-              </ScrollView>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                cursorColor={figmaColors.grayNeutral["900"]}
+                placeholder="Search for a currency/country"
+                placeholderTextColor={figmaColors.grayNeutral["400"]}
+                onChangeText={setSearchQuery}
+                selectionColor={figmaColors.grayNeutral["900"]}
+                style={styles.searchInput}
+                value={searchQuery}
+              />
             </View>
-          </Animated.View>
-        </SafeAreaView>
-      </View>
-    </Modal>
+
+            <Text style={styles.sectionLabel}>All currencies</Text>
+
+            <ScrollView
+              contentContainerStyle={styles.currencyList}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {filteredCurrencies.map((currency) => (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${currency.code}, ${currency.name}`}
+                  key={currency.code}
+                  onPress={() => onSelectCurrency(currency)}
+                  style={styles.currencyRow}
+                >
+                  <CurrencyFlag flag={currency.flag} />
+                  <View style={styles.currencyTextGroup}>
+                    <Text style={styles.currencyCode}>{currency.code}</Text>
+                    <Text style={styles.currencyName}>{currency.name}</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </Animated.View>
+      </SafeAreaView>
+    </View>
   );
 }
 
@@ -1694,9 +2099,16 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
   },
-  introLogo: {
-    height: 96,
-    width: 284,
+  introLogoRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+  },
+  introLogoText: {
+    color: "#fff",
+    fontFamily: fontFamily.bold,
+    fontSize: 34,
+    letterSpacing: -0.5,
   },
   screen: {
     backgroundColor: figmaColors.bg,
@@ -2088,9 +2500,10 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   content: {
+    alignItems: "center",
     flex: 1,
+    justifyContent: "center",
     paddingHorizontal: 16,
-    paddingTop: 40,
   },
   title: {
     color: figmaColors.grayNeutral["900"],
@@ -2098,20 +2511,19 @@ const styles = StyleSheet.create({
     fontSize: 28,
     letterSpacing: -0.56,
     lineHeight: 34,
+    textAlign: "center",
   },
   currencyPill: {
-    alignSelf: "flex-start",
+    alignItems: "center",
+    alignSelf: "center",
     backgroundColor: figmaColors.grayNeutral["200"],
-    borderRadius: 8,
+    borderRadius: 12,
     flexDirection: "row",
     gap: 8,
-    alignItems: "center",
-    marginTop: 6,
-    maxWidth: "100%",
-    padding: 8,
+    marginTop: 10,
+    padding: 14,
   },
   currencyPillSelected: {
-    alignSelf: "flex-start",
     backgroundColor: figmaColors.blue["50"],
   },
   selectedFlag: {
@@ -2247,8 +2659,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     flexDirection: "row",
     gap: 6,
-    height: 40,
     paddingHorizontal: 8,
+    paddingVertical: 10,
   },
   searchIcon: {
     alignItems: "center",
@@ -2263,8 +2675,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     includeFontPadding: false,
     letterSpacing: -0.18,
+    lineHeight: 20,
     padding: 0,
-    textAlignVertical: "center",
   },
   sectionLabel: {
     color: figmaColors.grayNeutral["500"],
@@ -2336,10 +2748,32 @@ const styles = StyleSheet.create({
   },
   txRow: {
     alignItems: "center",
+    backgroundColor: figmaColors.bg,
     flexDirection: "row",
     gap: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
+  },
+  txSwipeRow: {
+    overflow: "hidden",
+    position: "relative",
+  },
+  txDeleteReveal: {
+    alignItems: "center",
+    bottom: 0,
+    justifyContent: "center",
+    position: "absolute",
+    right: 0,
+    top: 0,
+    width: SWIPE_DELETE_REVEAL_WIDTH,
+  },
+  txDeleteButton: {
+    alignItems: "center",
+    backgroundColor: figmaColors.error["100"],
+    borderRadius: 999,
+    height: 32,
+    justifyContent: "center",
+    width: 32,
   },
   txIconCircle: {
     alignItems: "center",
@@ -2383,9 +2817,18 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     position: "absolute",
   },
+  toastDestructive: {
+    backgroundColor: figmaColors.error["700"],
+  },
   toastText: {
     color: figmaColors.base.white,
     fontFamily: fontFamily.medium,
+    fontSize: 12,
+    letterSpacing: -0.1,
+  },
+  toastActionText: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.bold,
     fontSize: 12,
     letterSpacing: -0.1,
   },

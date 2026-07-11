@@ -2,7 +2,7 @@ import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useCallback } from "react";
-import { View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { fontFamily } from "@/constants/typography";
 
@@ -29,8 +29,19 @@ export default function RootLayout() {
   }
 
   return (
-    <View onLayout={handleRootLayout} style={{ flex: 1 }}>
-      <Stack screenOptions={{ headerShown: false }} />
-    </View>
+    <GestureHandlerRootView onLayout={handleRootLayout} style={{ flex: 1 }}>
+      <Stack screenOptions={{ headerShown: false, animation: "none" }}>
+        <Stack.Screen name="add-entry" options={{ animation: "slide_from_bottom" }} />
+        <Stack.Screen name="personalization" options={{ animation: "none", presentation: "transparentModal" }} />
+        <Stack.Screen name="currency-preferences" options={{ animation: "none", presentation: "transparentModal" }} />
+        <Stack.Screen name="categories-alerts" options={{ animation: "none", presentation: "transparentModal" }} />
+        <Stack.Screen name="categories-accounts" options={{ animation: "none", presentation: "transparentModal" }} />
+        <Stack.Screen name="expense-categories" options={{ animation: "none", presentation: "transparentModal" }} />
+        <Stack.Screen name="income-categories" options={{ animation: "none", presentation: "transparentModal" }} />
+        <Stack.Screen name="accounts" options={{ animation: "none" }} />
+        <Stack.Screen name="account-detail" options={{ animation: "slide_from_right" }} />
+        <Stack.Screen name="data-management" options={{ animation: "none", presentation: "transparentModal" }} />
+      </Stack>
+    </GestureHandlerRootView>
   );
 }
