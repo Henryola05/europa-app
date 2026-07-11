@@ -3222,7 +3222,7 @@ export default function AddEntryScreen() {
   const isEditing = transactionId !== undefined;
   const editInitializedRef = useRef(false);
   const [transactionType, setTransactionType] =
-    useState<TransactionType>("income");
+    useState<TransactionType>("expense");
   const [amountCents, setAmountCents] = useState(0);
   const [description, setDescription] = useState("");
   const [isAmountSheetOpen, setIsAmountSheetOpen] = useState(false);
