@@ -2642,9 +2642,10 @@ function CategoryPickerSheet({
 
 const DescriptionInput = forwardRef<TextInput, {
   onChangeText: (text: string) => void;
+  onSubmitEditing?: () => void;
   placeholder: string;
   value: string;
-}>(function DescriptionInput({ onChangeText, placeholder, value }, ref) {
+}>(function DescriptionInput({ onChangeText, onSubmitEditing, placeholder, value }, ref) {
   const [isFocused, setIsFocused] = useState(false);
   const isActive = isFocused || value.length > 0;
 
@@ -2661,6 +2662,7 @@ const DescriptionInput = forwardRef<TextInput, {
         onBlur={() => setIsFocused(false)}
         onChangeText={onChangeText}
         onFocus={() => setIsFocused(true)}
+        onSubmitEditing={onSubmitEditing}
         placeholder={placeholder}
         placeholderTextColor={figmaColors.grayNeutral["400"]}
         returnKeyType="done"
@@ -2770,6 +2772,7 @@ function AmountInputSheet({
   amountCents,
   onChangeAmount,
   onClose,
+  onConfirm,
   onDismiss,
   onSelectCurrency,
   selectedCurrency,
@@ -2778,6 +2781,7 @@ function AmountInputSheet({
   amountCents: number;
   onChangeAmount: (amountCents: number) => void;
   onClose: () => void;
+  onConfirm?: () => void;
   onDismiss?: () => void;
   onSelectCurrency: (currency: Currency) => void;
   selectedCurrency: Currency;
@@ -2802,13 +2806,14 @@ function AmountInputSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const closeWithAnimation = useCallback(() => {
+  const closeWithAnimation = useCallback((afterClose?: () => void) => {
     Animated.parallel([
       Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
       Animated.timing(translateY, { duration: 220, toValue: 800, useNativeDriver: true }),
     ]).start(({ finished }) => {
       if (finished) {
         onClose();
+        afterClose?.();
         onDismiss?.();
       }
     });
@@ -2821,7 +2826,7 @@ function AmountInputSheet({
 
     if (key.type === "ok") {
       onChangeAmount(expressionToCents(expression));
-      closeWithAnimation();
+      closeWithAnimation(onConfirm);
       return;
     }
 
@@ -2867,7 +2872,7 @@ function AmountInputSheet({
   return (
     <Modal
       animationType="none"
-      onRequestClose={closeWithAnimation}
+      onRequestClose={() => closeWithAnimation()}
       transparent
       visible={visible}
     >
@@ -2879,7 +2884,7 @@ function AmountInputSheet({
           <Pressable
             accessibilityLabel="Close amount input"
             accessibilityRole="button"
-            onPress={closeWithAnimation}
+            onPress={() => closeWithAnimation()}
             style={StyleSheet.absoluteFill}
           />
         </Animated.View>
@@ -2896,7 +2901,7 @@ function AmountInputSheet({
               accessibilityLabel="Close amount input"
               accessibilityRole="button"
               hitSlop={10}
-              onPress={closeWithAnimation}
+              onPress={() => closeWithAnimation()}
               style={styles.closeButton}
             >
               <CloseIcon />
@@ -3377,6 +3382,9 @@ export default function AddEntryScreen() {
   const [isImageUploadOpen, setIsImageUploadOpen] = useState(false);
   const [transactionImages, setTransactionImages] = useState<SelectedImage[]>([]);
   const descriptionInputRef = useRef<TextInput>(null);
+  const shouldOpenDestinationAfterSourceRef = useRef(false);
+  const shouldFocusTitleAfterDestinationRef = useRef(false);
+  const shouldOpenAccountAfterCategoryRef = useRef(false);
 
   const currencySymbol = currencySymbols[selectedCurrency.code] ?? selectedCurrency.code;
   const hasAmount = amountCents > 0;
@@ -3407,6 +3415,23 @@ export default function AddEntryScreen() {
         : transactionType === "transfer"
           ? "Record transfer"
           : "Record expense";
+
+  const openNextRequiredTransactionInput = useCallback(() => {
+    setTimeout(() => {
+      if (transactionType === "transfer") {
+        setIsAccountPickerOpen(true);
+        return;
+      }
+
+      descriptionInputRef.current?.focus();
+    }, 50);
+  }, [transactionType]);
+
+  const openNextInputAfterTitle = useCallback(() => {
+    if (transactionType === "transfer") return;
+    descriptionInputRef.current?.blur();
+    setTimeout(() => setIsCategoryPickerOpen(true), 50);
+  }, [transactionType]);
 
   async function handleRecord() {
     if (!canRecord) return;
@@ -3548,6 +3573,7 @@ export default function AddEntryScreen() {
               </SentencePill>
               <Text style={styles.sentenceWord}>for</Text>
               <DescriptionInput
+                ref={descriptionInputRef}
                 onChangeText={setDescription}
                 placeholder="e.g rent share"
                 value={description}
@@ -3561,6 +3587,7 @@ export default function AddEntryScreen() {
               <DescriptionInput
                 ref={descriptionInputRef}
                 onChangeText={setDescription}
+                onSubmitEditing={openNextInputAfterTitle}
                 placeholder={
                   transactionType === "income"
                     ? "e.g logo design"
@@ -3686,15 +3713,8 @@ export default function AddEntryScreen() {
         onChangeAmount={setAmountCents}
         onClose={() => {
           setIsAmountSheetOpen(false);
-          setTimeout(() => {
-            if (transactionType === "transfer") {
-              if (!selectedAccount) setIsAccountPickerOpen(true);
-              else if (!transferDestinationAccount) setIsDestinationAccountPickerOpen(true);
-            } else {
-              descriptionInputRef.current?.focus();
-            }
-          }, 50);
         }}
+        onConfirm={openNextRequiredTransactionInput}
         onSelectCurrency={setSelectedCurrency}
         selectedCurrency={selectedCurrency}
         visible={isAmountSheetOpen}
@@ -3702,15 +3722,30 @@ export default function AddEntryScreen() {
 
       <CategoryPickerSheet
         type={transactionType === "income" ? "income" : "expense"}
-        onClose={() => setIsCategoryPickerOpen(false)}
-        onSelectCategory={setSelectedCategory}
+        onClose={() => {
+          setIsCategoryPickerOpen(false);
+          if (shouldOpenAccountAfterCategoryRef.current) {
+            shouldOpenAccountAfterCategoryRef.current = false;
+            setTimeout(() => setIsAccountPickerOpen(true), 50);
+          }
+        }}
+        onSelectCategory={(category) => {
+          setSelectedCategory(category);
+          shouldOpenAccountAfterCategoryRef.current = transactionType !== "transfer";
+        }}
         selectedCategory={selectedCategory}
         visible={isCategoryPickerOpen}
       />
 
       <AccountPickerSheet
         accounts={displayAccounts.filter((a) => !hiddenAccountIdSet.has(a.id))}
-        onClose={() => setIsAccountPickerOpen(false)}
+        onClose={() => {
+          setIsAccountPickerOpen(false);
+          if (shouldOpenDestinationAfterSourceRef.current) {
+            shouldOpenDestinationAfterSourceRef.current = false;
+            setTimeout(() => setIsDestinationAccountPickerOpen(true), 50);
+          }
+        }}
         onEditAccounts={() => {
           setIsAccountPickerOpen(false);
           setIsAccountsEditOpen(true);
@@ -3721,6 +3756,7 @@ export default function AddEntryScreen() {
         }}
         onSelectAccount={(account) => {
           setSelectedAccount(account);
+          shouldOpenDestinationAfterSourceRef.current = transactionType === "transfer";
           if (transferDestinationAccount?.id === account.id) {
             setTransferDestinationAccount(null);
           }
@@ -3733,7 +3769,13 @@ export default function AddEntryScreen() {
         accounts={displayAccounts.filter(
           (account) => !hiddenAccountIdSet.has(account.id) && account.id !== selectedAccount?.id,
         )}
-        onClose={() => setIsDestinationAccountPickerOpen(false)}
+        onClose={() => {
+          setIsDestinationAccountPickerOpen(false);
+          if (shouldFocusTitleAfterDestinationRef.current) {
+            shouldFocusTitleAfterDestinationRef.current = false;
+            setTimeout(() => descriptionInputRef.current?.focus(), 50);
+          }
+        }}
         onEditAccounts={() => {
           setIsDestinationAccountPickerOpen(false);
           setIsAccountsEditOpen(true);
@@ -3742,7 +3784,10 @@ export default function AddEntryScreen() {
           setIsDestinationAccountPickerOpen(false);
           setIsCreateAccountOpen(true);
         }}
-        onSelectAccount={setTransferDestinationAccount}
+        onSelectAccount={(account) => {
+          setTransferDestinationAccount(account);
+          shouldFocusTitleAfterDestinationRef.current = transactionType === "transfer";
+        }}
         selectedAccount={transferDestinationAccount}
         visible={isDestinationAccountPickerOpen}
       />
