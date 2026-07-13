@@ -766,7 +766,9 @@ export default function AccountsScreen() {
                 {" "}
                 ({changePositive ? "↑" : "↓"}{Math.abs(netWorthChangePct).toFixed(1)}%)
                 {" "}
-                {getPeriodChangeLabel(selectedPeriod)}
+                <Text style={styles.changePeriodText}>
+                  {getPeriodChangeLabel(selectedPeriod)}
+                </Text>
               </Text>
             )}
           </View>
@@ -795,14 +797,14 @@ export default function AccountsScreen() {
             <View style={styles.summaryItem}>
               <Text style={styles.summaryLabel}>Assets</Text>
               <Text style={[styles.summaryAmount, { color: figmaColors.success["700"] }]}>
-                {formatBalanceAbbr(totalAssetsCents, currencySymbol)}
+                {formatBalance(totalAssetsCents, currencySymbol)}
               </Text>
             </View>
             <View style={styles.summaryDivider} />
             <View style={styles.summaryItem}>
               <Text style={styles.summaryLabel}>Liabilities</Text>
               <Text style={[styles.summaryAmount, { color: figmaColors.error["700"] }]}>
-                {formatBalanceAbbr(Math.abs(totalLiabilitiesCents), currencySymbol)}
+                {formatBalance(Math.abs(totalLiabilitiesCents), currencySymbol)}
               </Text>
             </View>
           </View>
@@ -1005,6 +1007,9 @@ const styles = StyleSheet.create({
     letterSpacing: -0.1,
     lineHeight: 20,
   },
+  changePeriodText: {
+    color: figmaColors.grayNeutral["500"],
+  },
   // Period picker
   periodRow: {
     alignItems: "center",
@@ -1020,7 +1025,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   periodPillActive: {
-    backgroundColor: figmaColors.grayNeutral["900"],
+    backgroundColor: figmaColors.grayNeutral["100"],
   },
   periodPillText: {
     color: figmaColors.grayNeutral["500"],
@@ -1029,7 +1034,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.1,
   },
   periodPillTextActive: {
-    color: figmaColors.base.white,
+    color: figmaColors.grayNeutral["700"],
   },
   // Summary bar
   divider: {
@@ -1086,8 +1091,8 @@ const styles = StyleSheet.create({
   },
   groupTotal: {
     color: figmaColors.grayNeutral["900"],
-    fontFamily: fontFamily.bold,
-    fontSize: 15,
+    fontFamily: fontFamily.semiBold,
+    fontSize: 14,
     letterSpacing: -0.15,
     lineHeight: 20,
   },
