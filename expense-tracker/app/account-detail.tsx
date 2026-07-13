@@ -3,9 +3,8 @@ import { addDays, format, subMonths, subYears } from "date-fns";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Animated,
   Dimensions,
-  Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,7 +12,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import Svg, { ClipPath, Defs, G, LinearGradient, Path, Rect, Stop } from "react-native-svg";
+import Svg, { Circle, ClipPath, Defs, G, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 
 import { figmaColors } from "@/constants/colors";
 import { fontFamily } from "@/constants/typography";
@@ -40,6 +39,7 @@ const TRANSACTIONS_KEY = "europa:transactions";
 
 type Period = "1M" | "3M" | "6M" | "YTD" | "1Y" | "All";
 const PERIODS: Period[] = ["1M", "3M", "6M", "YTD", "1Y", "All"];
+type AccountBalancePoint = { date: Date; value: number };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -91,6 +91,10 @@ function periodSuffix(period: Period): string {
   }
 }
 
+function formatChartPointDate(date: Date, period: Period): string {
+  return period === "All" ? format(date, "MMM d, yyyy") : format(date, "MMM d");
+}
+
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
 function BackIcon() {
@@ -130,34 +134,43 @@ function DotsVerticalIcon() {
   );
 }
 
-function ChevronDownIcon() {
-  return (
-    <Svg fill="none" height={14} viewBox="0 0 24 24" width={14}>
-      <Path
-        d="M6 9l6 6 6-6"
-        stroke={figmaColors.grayNeutral["600"]}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-      />
-    </Svg>
-  );
-}
-
 // ─── Chart ────────────────────────────────────────────────────────────────────
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
 
 function BalanceChart({
   balance,
+  currencySymbol,
   data,
   height,
+  period,
   width,
 }: {
   balance: number;
-  data: number[];
+  currencySymbol: string;
+  data: AccountBalancePoint[];
   height: number;
+  period: Period;
   width: number;
 }) {
-  if (data.length < 2) return <View style={{ height, width }} />;
+  const TOOLTIP_WIDTH = 184;
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const chartRef = useRef<View>(null);
+  const chartLeftRef = useRef(0);
+  const chartWidthRef = useRef(width);
+  const latestLocalXRef = useRef(0);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isScrubbingRef = useRef(false);
+
+  const hasChartData = data.length >= 2;
+  const chartData = hasChartData
+    ? data
+    : [
+        { date: new Date(), value: 0 },
+        { date: new Date(), value: 0 },
+      ];
 
   const lineColor =
     balance > 0
@@ -172,192 +185,168 @@ function BalanceChart({
         ? figmaColors.error["400"]
         : figmaColors.grayNeutral["300"];
 
-  const min = Math.min(...data);
-  const max = Math.max(...data);
+  const values = chartData.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
   const range = max - min || Math.abs(max) || 1;
   const padded = range * 0.1;
   const yMin = min - padded;
   const yMax = max + padded;
   const yRange = yMax - yMin;
 
-  const toX = (i: number) => (i / (data.length - 1)) * width;
+  const toX = (i: number) => (i / (chartData.length - 1)) * width;
   const toY = (v: number) => height - ((v - yMin) / yRange) * height;
 
-  const points = data.map((v, i) => ({ x: toX(i), y: toY(v) }));
+  const points = chartData.map((point, i) => ({ x: toX(i), y: toY(point.value) }));
   const lineD = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
   const areaD = `${lineD} L${width.toFixed(1)},${height} L0,${height} Z`;
 
-  return (
-    <Svg height={height} width={width}>
-      <Defs>
-        <LinearGradient id="chartGrad" x1="0" x2="0" y1="0" y2="1">
-          <Stop offset="0%" stopColor={gradColor} stopOpacity="0.18" />
-          <Stop offset="100%" stopColor={gradColor} stopOpacity="0" />
-        </LinearGradient>
-      </Defs>
-      <Path d={areaD} fill="url(#chartGrad)" />
-      <Path
-        d={lineD}
-        fill="none"
-        stroke={lineColor}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-      />
-    </Svg>
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const selectNearestPoint = useCallback(
+    (x: number) => {
+      const safeWidth = Math.max(chartWidthRef.current, 1);
+      const index = Math.round((clamp(x, 0, safeWidth) / safeWidth) * (chartData.length - 1));
+      setSelectedIndex(clamp(index, 0, chartData.length - 1));
+    },
+    [chartData.length],
   );
-}
 
-// ─── Period Picker Sheet ──────────────────────────────────────────────────────
+  const updateChartMeasure = useCallback(() => {
+    chartRef.current?.measureInWindow((x, _y, measuredWidth) => {
+      chartLeftRef.current = x;
+      if (measuredWidth > 0) chartWidthRef.current = measuredWidth;
+    });
+  }, []);
 
-function PeriodPickerSheet({
-  onClose,
-  onSelect,
-  selected,
-  visible,
-}: {
-  onClose: () => void;
-  onSelect: (p: Period) => void;
-  selected: Period;
-  visible: boolean;
-}) {
-  const insets = useSafeAreaInsets();
-  const translateY = useRef(new Animated.Value(300)).current;
-  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const updateLatestLocalX = useCallback((moveX: number) => {
+    latestLocalXRef.current = moveX - chartLeftRef.current;
+    return latestLocalXRef.current;
+  }, []);
+
+  const hideSelection = useCallback(() => {
+    clearLongPressTimer();
+    isScrubbingRef.current = false;
+    setSelectedIndex(null);
+  }, [clearLongPressTimer]);
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: (event) => {
+          latestLocalXRef.current = event.nativeEvent.locationX;
+          updateChartMeasure();
+          clearLongPressTimer();
+          longPressTimerRef.current = setTimeout(() => {
+            isScrubbingRef.current = true;
+            selectNearestPoint(latestLocalXRef.current);
+          }, 220);
+        },
+        onPanResponderMove: (_event, gestureState) => {
+          const x = updateLatestLocalX(gestureState.moveX);
+          if (!isScrubbingRef.current) return;
+          selectNearestPoint(x);
+        },
+        onPanResponderRelease: hideSelection,
+        onPanResponderTerminate: hideSelection,
+        onPanResponderTerminationRequest: () => !isScrubbingRef.current,
+        onShouldBlockNativeResponder: () => false,
+        onStartShouldSetPanResponder: () => true,
+      }),
+    [clearLongPressTimer, hideSelection, selectNearestPoint, updateChartMeasure, updateLatestLocalX],
+  );
 
   useEffect(() => {
-    if (visible) {
-      translateY.setValue(300);
-      Animated.parallel([
-        Animated.timing(backdropOpacity, { duration: 250, toValue: 1, useNativeDriver: true }),
-        Animated.spring(translateY, { bounciness: 0, speed: 20, toValue: 0, useNativeDriver: true }),
-      ]).start();
-    } else {
-      backdropOpacity.setValue(0);
-      translateY.setValue(300);
-    }
-  }, [backdropOpacity, translateY, visible]);
+    chartWidthRef.current = width;
+    updateChartMeasure();
+  }, [updateChartMeasure, width]);
+
+  useEffect(() => () => clearLongPressTimer(), [clearLongPressTimer]);
+
+  if (!hasChartData) return <View style={{ height, width }} />;
+
+  const safeSelectedIndex =
+    selectedIndex === null ? null : clamp(selectedIndex, 0, chartData.length - 1);
+  const selectedPoint = safeSelectedIndex === null ? null : chartData[safeSelectedIndex];
+  const selectedPosition = safeSelectedIndex === null ? null : points[safeSelectedIndex];
+  const tooltipLeft = selectedPosition
+    ? clamp(selectedPosition.x - TOOLTIP_WIDTH / 2, 8, Math.max(8, width - TOOLTIP_WIDTH - 8))
+    : 8;
 
   return (
-    <Modal animationType="none" onRequestClose={onClose} transparent visible={visible}>
-      <View style={sheetStyles.root}>
-        <Animated.View style={[StyleSheet.absoluteFillObject, sheetStyles.backdrop, { opacity: backdropOpacity }]}>
-          <Pressable onPress={onClose} style={StyleSheet.absoluteFill} />
-        </Animated.View>
-        <Animated.View
+    <View
+      ref={chartRef}
+      onLayout={() => updateChartMeasure()}
+      style={[styles.accountChartInteractive, { height, width }]}
+      {...panResponder.panHandlers}
+    >
+      <Svg height={height} width={width}>
+        <Defs>
+          <LinearGradient id="chartGrad" x1="0" x2="0" y1="0" y2="1">
+            <Stop offset="0%" stopColor={gradColor} stopOpacity="0.18" />
+            <Stop offset="100%" stopColor={gradColor} stopOpacity="0" />
+          </LinearGradient>
+        </Defs>
+        <Path d={areaD} fill="url(#chartGrad)" />
+        <Path
+          d={lineD}
+          fill="none"
+          stroke={lineColor}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+        />
+        {selectedPosition ? (
+          <>
+            <Path
+              d={`M${selectedPosition.x.toFixed(2)},0 L${selectedPosition.x.toFixed(2)},${height}`}
+              stroke={figmaColors.grayNeutral["400"]}
+              strokeDasharray="4 4"
+              strokeOpacity={0.45}
+              strokeWidth={1}
+            />
+            <Circle
+              cx={selectedPosition.x}
+              cy={selectedPosition.y}
+              fill={lineColor}
+              r={4}
+              stroke={figmaColors.base.white}
+              strokeWidth={2}
+            />
+          </>
+        ) : null}
+      </Svg>
+      {selectedPoint ? (
+        <View
+          pointerEvents="none"
           style={[
-            sheetStyles.sheet,
-            { paddingBottom: Math.max(insets.bottom, 24) },
-            { transform: [{ translateY }] },
+            styles.chartTooltip,
+            {
+              left: tooltipLeft,
+              top: 8,
+              width: TOOLTIP_WIDTH,
+            },
           ]}
         >
-            {/* Header */}
-            <View style={sheetStyles.header}>
-              <Text style={sheetStyles.title}>Period</Text>
-              <Pressable accessibilityRole="button" onPress={onClose} style={sheetStyles.closeBtn}>
-                <Svg fill="none" height={16} viewBox="0 0 24 24" width={16}>
-                  <Path
-                    d="M18 6L6 18M6 6l12 12"
-                    stroke={figmaColors.grayNeutral["600"]}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                  />
-                </Svg>
-              </Pressable>
-            </View>
-            <View style={sheetStyles.divider} />
-
-            {/* Pills */}
-            <View style={sheetStyles.pillsGrid}>
-              {PERIODS.map((p) => {
-                const isActive = p === selected;
-                return (
-                  <Pressable
-                    key={p}
-                    accessibilityRole="button"
-                    onPress={() => onSelect(p)}
-                    style={[sheetStyles.pill, isActive && sheetStyles.pillActive]}
-                  >
-                    <Text style={[sheetStyles.pillText, isActive && sheetStyles.pillTextActive]}>
-                      {p}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-        </Animated.View>
-      </View>
-    </Modal>
+          <View style={styles.chartTooltipRow}>
+            <Text style={styles.chartTooltipLabel}>Date</Text>
+            <Text style={styles.chartTooltipValue}>{formatChartPointDate(selectedPoint.date, period)}</Text>
+          </View>
+          <View style={styles.chartTooltipRow}>
+            <Text style={styles.chartTooltipLabel}>Balance</Text>
+            <Text style={styles.chartTooltipValue}>{formatBalance(selectedPoint.value, currencySymbol)}</Text>
+          </View>
+        </View>
+      ) : null}
+    </View>
   );
 }
-
-const sheetStyles = StyleSheet.create({
-  root: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.4)",
-  },
-  sheet: {
-    backgroundColor: figmaColors.base.white,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop: 20,
-    paddingHorizontal: 20,
-  },
-  header: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 16,
-  },
-  title: {
-    color: figmaColors.grayNeutral["900"],
-    fontFamily: fontFamily.bold,
-    fontSize: 18,
-    letterSpacing: -0.3,
-  },
-  closeBtn: {
-    alignItems: "center",
-    backgroundColor: figmaColors.grayNeutral["100"],
-    borderRadius: 999,
-    height: 32,
-    justifyContent: "center",
-    width: 32,
-  },
-  divider: {
-    backgroundColor: figmaColors.grayNeutral["200"],
-    height: StyleSheet.hairlineWidth,
-    marginBottom: 20,
-  },
-  pillsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
-  pill: {
-    backgroundColor: figmaColors.grayNeutral["100"],
-    borderRadius: 12,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-  },
-  pillActive: {
-    backgroundColor: figmaColors.grayNeutral["900"],
-  },
-  pillText: {
-    color: figmaColors.grayNeutral["700"],
-    fontFamily: fontFamily.medium,
-    fontSize: 15,
-    letterSpacing: -0.1,
-  },
-  pillTextActive: {
-    color: figmaColors.base.white,
-    fontFamily: fontFamily.semiBold,
-  },
-});
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -371,7 +360,6 @@ export default function AccountDetailScreen() {
 
   const [allTransactions, setAllTransactions] = useState<RecordedTransaction[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<Period>("YTD");
-  const [isPeriodPickerOpen, setIsPeriodPickerOpen] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -452,7 +440,7 @@ export default function AccountDetailScreen() {
     );
     const step = Math.max(1, Math.floor(totalDays / 120));
 
-    const points: number[] = [];
+    const points: AccountBalancePoint[] = [];
     let balance = balanceAtPeriodStart;
     let d = new Date(start);
     let dayCount = 0;
@@ -460,12 +448,19 @@ export default function AccountDetailScreen() {
     while (d <= end) {
       const key = format(d, "yyyy-MM-dd");
       if (txByDay.has(key)) balance += txByDay.get(key)!;
-      if (dayCount % step === 0) points.push(balance);
+      if (dayCount % step === 0) points.push({ date: new Date(d), value: balance });
       d = addDays(d, 1);
       dayCount++;
     }
-    if (points[points.length - 1] !== balance) points.push(balance);
-    return points.length > 0 ? points : [balanceAtPeriodStart, currentBalance];
+    if (points[points.length - 1]?.value !== balance) {
+      points.push({ date: new Date(end), value: balance });
+    }
+    return points.length > 0
+      ? points
+      : [
+          { date: start, value: balanceAtPeriodStart },
+          { date: end, value: currentBalance },
+        ];
   }, [account, balanceAtPeriodStart, currentBalance, periodStart, periodTransactions, today]);
 
   // Deposit / withdrawal totals for the period
@@ -512,16 +507,6 @@ export default function AccountDetailScreen() {
   }, [periodTransactions, account]);
 
   const screenWidth = Dimensions.get("window").width;
-  const chartWidth = screenWidth - 40;
-
-  const firstTxDate =
-    periodTransactions.length > 0 ? new Date(periodTransactions[0].date) : periodStart;
-  const periodStartLabel =
-    selectedPeriod === "All" && periodTransactions.length > 0
-      ? format(firstTxDate, "MMM dd, yyyy")
-      : format(periodStart, "MMM dd, yyyy");
-  const periodEndLabel = format(today, "MMM dd, yyyy");
-
   if (!account) {
     return (
       <SafeAreaView edges={["top"]} style={styles.root}>
@@ -571,22 +556,10 @@ export default function AccountDetailScreen() {
       >
         {/* Balance section */}
         <View style={styles.balanceSection}>
-          <View style={styles.balanceTopRow}>
-            <View>
-              <Text style={styles.balanceLabel}>Balance</Text>
-              <Text style={styles.balanceAmount}>
-                {formatBalance(currentBalance, currencySymbol)}
-              </Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setIsPeriodPickerOpen(true)}
-              style={styles.periodPill}
-            >
-              <Text style={styles.periodPillText}>{selectedPeriod}</Text>
-              <ChevronDownIcon />
-            </Pressable>
-          </View>
+          <Text style={styles.balanceLabel}>Balance</Text>
+          <Text style={styles.balanceAmount}>
+            {formatBalance(currentBalance, currencySymbol)}
+          </Text>
 
           {/* Delta */}
           <View style={styles.deltaRow}>
@@ -609,32 +582,67 @@ export default function AccountDetailScreen() {
 
         {/* Chart */}
         <View style={styles.chartWrapper}>
-          <BalanceChart balance={currentBalance} data={chartData} height={180} width={chartWidth} />
-          <View style={styles.chartDateRow}>
-            <Text style={styles.chartDateLabel}>{periodStartLabel}</Text>
-            <Text style={styles.chartDateLabel}>{periodEndLabel}</Text>
-          </View>
+          <BalanceChart
+            balance={currentBalance}
+            currencySymbol={currencySymbol}
+            data={chartData}
+            height={200}
+            period={selectedPeriod}
+            width={screenWidth}
+          />
+        </View>
+
+        {/* Period picker */}
+        <View style={styles.periodRow}>
+          {PERIODS.map((p) => {
+            const isActive = selectedPeriod === p;
+            return (
+              <Pressable
+                key={p}
+                accessibilityRole="button"
+                onPress={() => setSelectedPeriod(p)}
+                style={[styles.periodPill, isActive && styles.periodPillActive]}
+              >
+                <Text style={[styles.periodPillText, isActive && styles.periodPillTextActive]}>
+                  {p === "All" ? "ALL" : p}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
 
         {/* Stats bar */}
+        <View style={styles.divider} />
         <View style={styles.statsBar}>
           <View style={styles.statItem}>
             <Text style={styles.statLabel}>Deposit</Text>
-            <Text style={[styles.statAmount, { color: figmaColors.success["700"] }]}>
+            <Text
+              adjustsFontSizeToFit
+              numberOfLines={1}
+              style={[styles.statAmount, { color: figmaColors.success["700"] }]}
+            >
               {formatBalanceAbbr(depositCents, currencySymbol)}
             </Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
             <Text style={styles.statLabel}>Withdrawal</Text>
-            <Text style={[styles.statAmount, { color: figmaColors.error["700"] }]}>
+            <Text
+              adjustsFontSizeToFit
+              numberOfLines={1}
+              style={[styles.statAmount, { color: figmaColors.error["700"] }]}
+            >
               {formatBalanceAbbr(withdrawalCents, currencySymbol)}
             </Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
             <Text style={styles.statLabel}>Total</Text>
-            <Text style={[styles.statAmount, { color: figmaColors.grayNeutral["900"] }]}>
+            <Text
+              adjustsFontSizeToFit
+              numberOfLines={1}
+              style={[styles.statAmount, { color: figmaColors.grayNeutral["900"] }]}
+            >
               {formatBalanceAbbr(depositCents - withdrawalCents, currencySymbol)}
             </Text>
           </View>
@@ -779,13 +787,6 @@ export default function AccountDetailScreen() {
           />
         </Svg>
       </Pressable>
-
-      <PeriodPickerSheet
-        onClose={() => setIsPeriodPickerOpen(false)}
-        onSelect={(p) => { setSelectedPeriod(p); setIsPeriodPickerOpen(false); }}
-        selected={selectedPeriod}
-        visible={isPeriodPickerOpen}
-      />
     </SafeAreaView>
   );
 }
@@ -837,14 +838,10 @@ const styles = StyleSheet.create({
   },
   // Balance
   balanceSection: {
+    gap: 4,
     paddingHorizontal: 20,
-    paddingTop: 8,
     paddingBottom: 16,
-  },
-  balanceTopRow: {
-    alignItems: "flex-start",
-    flexDirection: "row",
-    justifyContent: "space-between",
+    paddingTop: 4,
   },
   balanceLabel: {
     color: figmaColors.grayNeutral["500"],
@@ -852,29 +849,38 @@ const styles = StyleSheet.create({
     fontSize: 13,
     letterSpacing: -0.1,
     lineHeight: 18,
-    marginBottom: 4,
   },
   balanceAmount: {
     color: figmaColors.grayNeutral["950"],
     fontFamily: fontFamily.bold,
-    fontSize: 32,
-    letterSpacing: -1,
-    lineHeight: 38,
+    fontSize: 36,
+    letterSpacing: -0.8,
+    lineHeight: 44,
+  },
+  periodRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingVertical: 14,
   },
   periodPill: {
     alignItems: "center",
-    backgroundColor: figmaColors.grayNeutral["100"],
     borderRadius: 999,
-    flexDirection: "row",
-    gap: 4,
-    marginTop: 20,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 6,
   },
+  periodPillActive: {
+    backgroundColor: figmaColors.grayNeutral["100"],
+  },
   periodPillText: {
-    color: figmaColors.grayNeutral["700"],
-    fontFamily: fontFamily.semiBold,
+    color: figmaColors.grayNeutral["500"],
+    fontFamily: fontFamily.medium,
     fontSize: 13,
+    letterSpacing: -0.1,
+  },
+  periodPillTextActive: {
+    color: figmaColors.grayNeutral["700"],
   },
   deltaRow: {
     alignItems: "center",
@@ -894,24 +900,43 @@ const styles = StyleSheet.create({
   },
   // Chart
   chartWrapper: {
-    paddingHorizontal: 20,
-    paddingBottom: 8,
+    paddingBottom: 0,
   },
-  chartDateRow: {
+  accountChartInteractive: {
+    position: "relative",
+  },
+  chartTooltip: {
+    backgroundColor: figmaColors.grayNeutral["900"],
+    borderRadius: 8,
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    position: "absolute",
+  },
+  chartTooltipRow: {
+    alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
-    marginTop: 6,
   },
-  chartDateLabel: {
+  chartTooltipLabel: {
     color: figmaColors.grayNeutral["400"],
-    fontFamily: fontFamily.regular,
+    fontFamily: fontFamily.medium,
     fontSize: 12,
-    letterSpacing: -0.1,
+    lineHeight: 16,
+  },
+  chartTooltipValue: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.semiBold,
+    fontSize: 12,
+    lineHeight: 16,
+    marginLeft: 12,
+    textAlign: "right",
   },
   // Stats bar
   statsBar: {
     flexDirection: "row",
-    paddingVertical: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
   },
   statItem: {
     alignItems: "center",
@@ -1038,35 +1063,6 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.semiBold,
     fontSize: 16,
     letterSpacing: -0.2,
-  },
-  // Period picker modal
-  modalBackdrop: {
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.3)",
-    flex: 1,
-    justifyContent: "center",
-  },
-  periodPickerCard: {
-    backgroundColor: figmaColors.bg,
-    borderRadius: 16,
-    overflow: "hidden",
-    width: 200,
-  },
-  periodOption: {
-    alignItems: "center",
-    paddingVertical: 14,
-  },
-  periodOptionActive: {
-    backgroundColor: figmaColors.blue["50"],
-  },
-  periodOptionText: {
-    color: figmaColors.grayNeutral["700"],
-    fontFamily: fontFamily.medium,
-    fontSize: 15,
-  },
-  periodOptionTextActive: {
-    color: figmaColors.blue["600"],
-    fontFamily: fontFamily.semiBold,
   },
   fab: {
     alignItems: "center",
