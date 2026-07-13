@@ -701,10 +701,28 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
   const handleUndoDelete = useCallback(async () => {
     if (!pendingDeletion) return;
 
+    let currentTransactions = transactions;
+    try {
+      const stored = await AsyncStorage.getItem(TRANSACTIONS_KEY);
+      currentTransactions = stored ? (JSON.parse(stored) as Transaction[]) : transactions;
+    } catch {
+      currentTransactions = transactions;
+    }
+
+    if (currentTransactions.some((tx) => tx.id === pendingDeletion.transaction.id)) {
+      setPendingDeletion(null);
+      setTransactions(currentTransactions);
+      return;
+    }
+
+    const restoreIndex = Math.max(
+      0,
+      Math.min(pendingDeletion.originalIndex, currentTransactions.length),
+    );
     const restoredTransactions = [
-      ...transactions.slice(0, pendingDeletion.originalIndex),
+      ...currentTransactions.slice(0, restoreIndex),
       pendingDeletion.transaction,
-      ...transactions.slice(pendingDeletion.originalIndex),
+      ...currentTransactions.slice(restoreIndex),
     ];
     setTransactions(restoredTransactions);
     setPendingDeletion(null);
@@ -729,6 +747,19 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
 
   useFocusEffect(
     useCallback(() => {
+      const deleted = useUIStore.getState().pendingDeletedTransaction;
+      if (deleted) {
+        useUIStore.getState().setPendingDeletedTransaction(null);
+        setPendingDeletion({
+          dateSection: deleted.transaction.date.slice(0, 10),
+          id: Date.now(),
+          originalIndex: deleted.originalIndex,
+          transaction: deleted.transaction as Transaction,
+        });
+        setShowToast(true);
+        return;
+      }
+
       const msg = useUIStore.getState().pendingToast;
       if (!msg) return;
       useUIStore.getState().setPendingToast(null);

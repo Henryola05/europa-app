@@ -32,6 +32,7 @@ import { COLOR_PALETTE } from "@/constants/categories";
 import { fontFamily } from "@/constants/typography";
 import { useCategoriesStore } from "@/stores/categories";
 import { accountGroupOrder, useAccountsStore, type AccountGroup as StoreAccountGroup } from "@/stores/accounts";
+import { useUIStore } from "@/stores/ui";
 import {
   currencies,
   currencySymbols,
@@ -3479,10 +3480,18 @@ export default function AddEntryScreen() {
     try {
       const existing = await AsyncStorage.getItem(TRANSACTIONS_KEY);
       const list = existing ? (JSON.parse(existing) as RecordedTransaction[]) : [];
+      const originalIndex = list.findIndex((stored) => stored.id === transactionId);
+      const transaction = originalIndex >= 0 ? list[originalIndex] : null;
       await AsyncStorage.setItem(
         TRANSACTIONS_KEY,
         JSON.stringify(list.filter((stored) => stored.id !== transactionId)),
       );
+      if (transaction) {
+        useUIStore.getState().setPendingDeletedTransaction({
+          originalIndex,
+          transaction,
+        });
+      }
     } catch {
       // Keep navigation reliable even if local persistence fails.
     }
