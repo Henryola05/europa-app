@@ -1285,7 +1285,7 @@ const styles = StyleSheet.create({
   },
   // Account list
   listContent: {
-    paddingBottom: 100,
+    paddingBottom: 8,
     paddingTop: 8,
   },
   groupHeader: {
