@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { startOfYear, subMonths, subYears } from "date-fns";
+import { format as formatDate, startOfYear, subMonths, subYears } from "date-fns";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -38,6 +38,7 @@ import {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ACCOUNT_ITEM_HEIGHT = 52;
+const NET_WORTH_CHART_HEIGHT = 200;
 const TRANSACTIONS_KEY = "europa:transactions";
 const HOME_CURRENCY_KEY = "europa:home-currency";
 
@@ -55,6 +56,7 @@ type StoredTransaction = {
 
 type Period = "1M" | "3M" | "6M" | "YTD" | "1Y" | "ALL";
 const PERIODS: Period[] = ["1M", "3M", "6M", "YTD", "1Y", "ALL"];
+type NetWorthPoint = { date: Date; value: number };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -101,6 +103,10 @@ function getPeriodChangeLabel(period: Period): string {
     case "1Y": return "vs last year";
     case "ALL": return "since start";
   }
+}
+
+function formatChartPointDate(date: Date, period: Period): string {
+  return period === "ALL" ? formatDate(date, "MMM d, yyyy") : formatDate(date, "MMM d");
 }
 
 function computeLiveBalanceAtDate(
@@ -162,18 +168,24 @@ function computeNetWorthSeries(
   exchangeRates: Record<string, number>,
   homeCurrencyCode: string,
   period: Period,
-): number[] {
+): NetWorthPoint[] {
   const now = new Date();
   const start = getPeriodStart(period, transactions);
   const NUM_POINTS = 30;
   const spanMs = now.getTime() - start.getTime();
   if (spanMs <= 0) {
     const v = computeNetWorthAtDate(accounts, transactions, exchangeRates, homeCurrencyCode);
-    return [v, v];
+    return [
+      { date: start, value: v },
+      { date: now, value: v },
+    ];
   }
   return Array.from({ length: NUM_POINTS }, (_, i) => {
     const date = new Date(start.getTime() + (i / (NUM_POINTS - 1)) * spanMs);
-    return computeNetWorthAtDate(accounts, transactions, exchangeRates, homeCurrencyCode, date);
+    return {
+      date,
+      value: computeNetWorthAtDate(accounts, transactions, exchangeRates, homeCurrencyCode, date),
+    };
   });
 }
 
@@ -294,9 +306,28 @@ function DragHandleIcon() {
 
 // ─── NetWorthChart ────────────────────────────────────────────────────────────
 
-function NetWorthChart({ data, positive }: { data: number[]; positive: boolean | null }) {
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function NetWorthChart({
+  currencySymbol,
+  data,
+  period,
+  positive,
+}: {
+  currencySymbol: string;
+  data: NetWorthPoint[];
+  period: Period;
+  positive: boolean | null;
+}) {
   const { width } = useWindowDimensions();
-  const HEIGHT = 160;
+  const HEIGHT = NET_WORTH_CHART_HEIGHT;
+  const TOOLTIP_WIDTH = 184;
+  const TOOLTIP_HEIGHT = 78;
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isScrubbingRef = useRef(false);
 
   const lineColor =
     positive === true
@@ -304,21 +335,25 @@ function NetWorthChart({ data, positive }: { data: number[]; positive: boolean |
       : positive === false
       ? figmaColors.error["600"]
       : figmaColors.grayNeutral["300"];
+  const hasChartData = data.length >= 2;
+  const chartData = hasChartData
+    ? data
+    : [
+        { date: new Date(), value: 0 },
+        { date: new Date(), value: 0 },
+      ];
 
-  if (data.length < 2) {
-    return <View style={{ height: HEIGHT }} />;
-  }
-
-  const min = Math.min(...data);
-  const max = Math.max(...data);
+  const values = chartData.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
   const range = max - min || 1;
   const PAD_T = 16;
   const PAD_B = 16;
   const chartH = HEIGHT - PAD_T - PAD_B;
 
-  const pts = data.map((v, i) => ({
-    x: (i / (data.length - 1)) * width,
-    y: PAD_T + chartH - ((v - min) / range) * chartH,
+  const pts = chartData.map((point, i) => ({
+    x: (i / (chartData.length - 1)) * width,
+    y: PAD_T + chartH - ((point.value - min) / range) * chartH,
   }));
 
   let linePath = `M${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`;
@@ -330,17 +365,121 @@ function NetWorthChart({ data, positive }: { data: number[]; positive: boolean |
   }
   const fillPath = `${linePath} L${pts[pts.length - 1].x.toFixed(2)},${HEIGHT} L${pts[0].x.toFixed(2)},${HEIGHT} Z`;
 
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const selectNearestPoint = useCallback(
+    (x: number) => {
+      const safeWidth = Math.max(width, 1);
+      const index = Math.round((clamp(x, 0, safeWidth) / safeWidth) * (chartData.length - 1));
+      setSelectedIndex(clamp(index, 0, chartData.length - 1));
+    },
+    [chartData.length, width],
+  );
+
+  const hideSelection = useCallback(() => {
+    clearLongPressTimer();
+    isScrubbingRef.current = false;
+    setSelectedIndex(null);
+  }, [clearLongPressTimer]);
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: () => isScrubbingRef.current,
+        onPanResponderGrant: (event) => {
+          const x = event.nativeEvent.locationX;
+          clearLongPressTimer();
+          longPressTimerRef.current = setTimeout(() => {
+            isScrubbingRef.current = true;
+            selectNearestPoint(x);
+          }, 220);
+        },
+        onPanResponderMove: (event) => {
+          if (!isScrubbingRef.current) return;
+          selectNearestPoint(event.nativeEvent.locationX);
+        },
+        onPanResponderRelease: hideSelection,
+        onPanResponderTerminate: hideSelection,
+        onShouldBlockNativeResponder: () => false,
+        onStartShouldSetPanResponder: () => true,
+      }),
+    [clearLongPressTimer, hideSelection, selectNearestPoint],
+  );
+
+  useEffect(() => () => clearLongPressTimer(), [clearLongPressTimer]);
+
+  if (!hasChartData) {
+    return <View style={{ height: HEIGHT }} />;
+  }
+
+  const safeSelectedIndex =
+    selectedIndex === null ? null : clamp(selectedIndex, 0, chartData.length - 1);
+  const selectedPoint = safeSelectedIndex === null ? null : chartData[safeSelectedIndex];
+  const selectedPosition = safeSelectedIndex === null ? null : pts[safeSelectedIndex];
+  const tooltipLeft = selectedPosition
+    ? clamp(selectedPosition.x - TOOLTIP_WIDTH / 2, 8, Math.max(8, width - TOOLTIP_WIDTH - 8))
+    : 8;
+  const tooltipTop = 8;
+
   return (
-    <Svg height={HEIGHT} width={width}>
-      <Defs>
-        <LinearGradient id="nwGrad" x1="0" x2="0" y1="0" y2="1">
-          <Stop offset="0" stopColor={lineColor} stopOpacity={0.18} />
-          <Stop offset="1" stopColor={lineColor} stopOpacity={0} />
-        </LinearGradient>
-      </Defs>
-      <Path d={fillPath} fill="url(#nwGrad)" />
-      <Path d={linePath} fill="none" stroke={lineColor} strokeWidth={2} />
-    </Svg>
+    <View style={styles.chartWrap} {...panResponder.panHandlers}>
+      <Svg height={HEIGHT} width={width}>
+        <Defs>
+          <LinearGradient id="nwGrad" x1="0" x2="0" y1="0" y2="1">
+            <Stop offset="0" stopColor={lineColor} stopOpacity={0.18} />
+            <Stop offset="1" stopColor={lineColor} stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Path d={fillPath} fill="url(#nwGrad)" />
+        <Path d={linePath} fill="none" stroke={lineColor} strokeWidth={2} />
+        {selectedPosition ? (
+          <>
+            <Path
+              d={`M${selectedPosition.x.toFixed(2)},0 L${selectedPosition.x.toFixed(2)},${HEIGHT}`}
+              stroke={figmaColors.grayNeutral["400"]}
+              strokeDasharray="4 4"
+              strokeOpacity={0.45}
+              strokeWidth={1}
+            />
+            <Circle
+              cx={selectedPosition.x}
+              cy={selectedPosition.y}
+              fill={lineColor}
+              r={4}
+              stroke={figmaColors.base.white}
+              strokeWidth={2}
+            />
+          </>
+        ) : null}
+      </Svg>
+      {selectedPoint ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.chartTooltip,
+            {
+              left: tooltipLeft,
+              top: tooltipTop,
+              width: TOOLTIP_WIDTH,
+            },
+          ]}
+        >
+          <View style={styles.chartTooltipRow}>
+            <Text style={styles.chartTooltipLabel}>Date</Text>
+            <Text style={styles.chartTooltipValue}>{formatChartPointDate(selectedPoint.date, period)}</Text>
+          </View>
+          <View style={styles.chartTooltipRow}>
+            <Text style={styles.chartTooltipLabel}>Net Worth</Text>
+            <Text style={styles.chartTooltipValue}>{formatBalance(selectedPoint.value, currencySymbol)}</Text>
+          </View>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -774,7 +913,12 @@ export default function AccountsScreen() {
           </View>
 
           {/* Chart */}
-          <NetWorthChart data={netWorthSeries} positive={changePositive} />
+          <NetWorthChart
+            currencySymbol={currencySymbol}
+            data={netWorthSeries}
+            period={selectedPeriod}
+            positive={changePositive}
+          />
 
           {/* Period picker */}
           <View style={styles.periodRow}>
@@ -1009,6 +1153,37 @@ const styles = StyleSheet.create({
   },
   changePeriodText: {
     color: figmaColors.grayNeutral["500"],
+  },
+  chartWrap: {
+    height: NET_WORTH_CHART_HEIGHT,
+    position: "relative",
+  },
+  chartTooltip: {
+    backgroundColor: figmaColors.grayNeutral["900"],
+    borderRadius: 8,
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    position: "absolute",
+  },
+  chartTooltipRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  chartTooltipLabel: {
+    color: figmaColors.grayNeutral["400"],
+    fontFamily: fontFamily.medium,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  chartTooltipValue: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.semiBold,
+    fontSize: 12,
+    lineHeight: 16,
+    marginLeft: 12,
+    textAlign: "right",
   },
   // Period picker
   periodRow: {
