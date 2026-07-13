@@ -321,11 +321,16 @@ function NetWorthChart({
   period: Period;
   positive: boolean | null;
 }) {
-  const { width } = useWindowDimensions();
+  const { width: windowWidth } = useWindowDimensions();
   const HEIGHT = NET_WORTH_CHART_HEIGHT;
   const TOOLTIP_WIDTH = 184;
   const TOOLTIP_HEIGHT = 78;
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [chartWidth, setChartWidth] = useState(windowWidth);
+  const chartRef = useRef<View>(null);
+  const chartLeftRef = useRef(0);
+  const chartWidthRef = useRef(windowWidth);
+  const latestLocalXRef = useRef(0);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isScrubbingRef = useRef(false);
 
@@ -352,7 +357,7 @@ function NetWorthChart({
   const chartH = HEIGHT - PAD_T - PAD_B;
 
   const pts = chartData.map((point, i) => ({
-    x: (i / (chartData.length - 1)) * width,
+    x: (i / (chartData.length - 1)) * chartWidth,
     y: PAD_T + chartH - ((point.value - min) / range) * chartH,
   }));
 
@@ -374,12 +379,27 @@ function NetWorthChart({
 
   const selectNearestPoint = useCallback(
     (x: number) => {
-      const safeWidth = Math.max(width, 1);
+      const safeWidth = Math.max(chartWidthRef.current, 1);
       const index = Math.round((clamp(x, 0, safeWidth) / safeWidth) * (chartData.length - 1));
       setSelectedIndex(clamp(index, 0, chartData.length - 1));
     },
-    [chartData.length, width],
+    [chartData.length],
   );
+
+  const updateChartMeasure = useCallback(() => {
+    chartRef.current?.measureInWindow((x, _y, measuredWidth) => {
+      chartLeftRef.current = x;
+      if (measuredWidth > 0) {
+        chartWidthRef.current = measuredWidth;
+        setChartWidth((current) => (current === measuredWidth ? current : measuredWidth));
+      }
+    });
+  }, []);
+
+  const updateLatestLocalX = useCallback((moveX: number) => {
+    latestLocalXRef.current = moveX - chartLeftRef.current;
+    return latestLocalXRef.current;
+  }, []);
 
   const hideSelection = useCallback(() => {
     clearLongPressTimer();
@@ -390,26 +410,35 @@ function NetWorthChart({
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: () => isScrubbingRef.current,
+        onMoveShouldSetPanResponder: () => true,
         onPanResponderGrant: (event) => {
-          const x = event.nativeEvent.locationX;
+          latestLocalXRef.current = event.nativeEvent.locationX;
+          updateChartMeasure();
           clearLongPressTimer();
           longPressTimerRef.current = setTimeout(() => {
             isScrubbingRef.current = true;
-            selectNearestPoint(x);
+            selectNearestPoint(latestLocalXRef.current);
           }, 220);
         },
-        onPanResponderMove: (event) => {
+        onPanResponderMove: (_event, gestureState) => {
+          const x = updateLatestLocalX(gestureState.moveX);
           if (!isScrubbingRef.current) return;
-          selectNearestPoint(event.nativeEvent.locationX);
+          selectNearestPoint(x);
         },
         onPanResponderRelease: hideSelection,
         onPanResponderTerminate: hideSelection,
+        onPanResponderTerminationRequest: () => !isScrubbingRef.current,
         onShouldBlockNativeResponder: () => false,
         onStartShouldSetPanResponder: () => true,
       }),
-    [clearLongPressTimer, hideSelection, selectNearestPoint],
+    [clearLongPressTimer, hideSelection, selectNearestPoint, updateChartMeasure, updateLatestLocalX],
   );
+
+  useEffect(() => {
+    chartWidthRef.current = windowWidth;
+    setChartWidth(windowWidth);
+    updateChartMeasure();
+  }, [updateChartMeasure, windowWidth]);
 
   useEffect(() => () => clearLongPressTimer(), [clearLongPressTimer]);
 
@@ -422,13 +451,23 @@ function NetWorthChart({
   const selectedPoint = safeSelectedIndex === null ? null : chartData[safeSelectedIndex];
   const selectedPosition = safeSelectedIndex === null ? null : pts[safeSelectedIndex];
   const tooltipLeft = selectedPosition
-    ? clamp(selectedPosition.x - TOOLTIP_WIDTH / 2, 8, Math.max(8, width - TOOLTIP_WIDTH - 8))
+    ? clamp(selectedPosition.x - TOOLTIP_WIDTH / 2, 8, Math.max(8, chartWidth - TOOLTIP_WIDTH - 8))
     : 8;
   const tooltipTop = 8;
 
   return (
-    <View style={styles.chartWrap} {...panResponder.panHandlers}>
-      <Svg height={HEIGHT} width={width}>
+    <View
+      ref={chartRef}
+      onLayout={(event) => {
+        const nextWidth = event.nativeEvent.layout.width || windowWidth;
+        chartWidthRef.current = nextWidth;
+        setChartWidth((current) => (current === nextWidth ? current : nextWidth));
+        updateChartMeasure();
+      }}
+      style={styles.chartWrap}
+      {...panResponder.panHandlers}
+    >
+      <Svg height={HEIGHT} width={chartWidth}>
         <Defs>
           <LinearGradient id="nwGrad" x1="0" x2="0" y1="0" y2="1">
             <Stop offset="0" stopColor={lineColor} stopOpacity={0.18} />

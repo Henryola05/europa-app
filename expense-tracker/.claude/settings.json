@@ -1,4 +1,16 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(npx expo *)",
+      "Bash(git commit -m ' *)",
+      "Bash(npx expo-doctor@latest)",
+      "Bash(node -e \"const pkg = require\\('/Users/mac/Documents/Europa App/expense-tracker/node_modules/react-native-worklets/package.json'\\); console.log\\(pkg.version\\)\")",
+      "Bash(node -e \"const pkg = require\\('./node_modules/react-native-gesture-handler/package.json'\\); console.log\\('gesture-handler:', pkg.version\\)\")",
+      "Bash(node -e \"const pkg = require\\('./node_modules/react-native-reanimated/package.json'\\); console.log\\('reanimated:', pkg.version\\)\")",
+      "Bash(git -C \"/Users/mac/Documents/Europa App/expense-tracker\" add app/_layout.tsx app/index.tsx app/personalization.tsx app/settings.tsx app/currency-preferences.tsx)",
+      "Bash(git -C '/Users/mac/Documents/Europa App/expense-tracker' commit -m ' *)"
+    ]
+  },
   "enabledPlugins": {
     "expo@claude-plugins-official": true
   }
