@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { format as formatDate, startOfYear, subMonths, subYears } from "date-fns";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -8,10 +9,11 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Svg, { Circle, ClipPath, Defs, G, Path, Rect } from "react-native-svg";
+import Svg, { Circle, ClipPath, Defs, G, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 
 import { figmaColors } from "@/constants/colors";
 import { fontFamily } from "@/constants/typography";
@@ -36,6 +38,7 @@ import {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ACCOUNT_ITEM_HEIGHT = 52;
+const NET_WORTH_CHART_HEIGHT = 200;
 const TRANSACTIONS_KEY = "europa:transactions";
 const HOME_CURRENCY_KEY = "europa:home-currency";
 
@@ -48,7 +51,12 @@ type StoredTransaction = {
   currencyCode?: string;
   accountName: string;
   destinationAccountName?: string;
+  date?: string;
 };
+
+type Period = "1M" | "3M" | "6M" | "YTD" | "1Y" | "ALL";
+const PERIODS: Period[] = ["1M", "3M", "6M", "YTD", "1Y", "ALL"];
+type NetWorthPoint = { date: Date; value: number };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -62,13 +70,56 @@ function formatBalance(cents: number, symbol = "$") {
   return `${sign}${symbol}${whole}.${decimal}`;
 }
 
-function computeLiveBalance(
+function formatBalanceAbbr(cents: number, symbol = "$"): string {
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  if (abs >= 100_000_000) return `${sign}${symbol}${(abs / 100_000_000).toFixed(1)}M`;
+  if (abs >= 100_000) return `${sign}${symbol}${(abs / 100_000).toFixed(1)}k`;
+  return formatBalance(cents, symbol);
+}
+
+function getPeriodStart(period: Period, transactions: StoredTransaction[]): Date {
+  if (period === "ALL") {
+    const times = transactions.flatMap((tx) => (tx.date ? [new Date(tx.date).getTime()] : []));
+    if (times.length === 0) return subYears(new Date(), 1);
+    return new Date(Math.min(...times));
+  }
+  const now = new Date();
+  switch (period) {
+    case "1M": return subMonths(now, 1);
+    case "3M": return subMonths(now, 3);
+    case "6M": return subMonths(now, 6);
+    case "YTD": return startOfYear(now);
+    case "1Y": return subYears(now, 1);
+  }
+}
+
+function getPeriodChangeLabel(period: Period): string {
+  switch (period) {
+    case "1M": return "vs last month";
+    case "3M": return "vs 3 months ago";
+    case "6M": return "vs 6 months ago";
+    case "YTD": return "vs start of year";
+    case "1Y": return "vs last year";
+    case "ALL": return "since start";
+  }
+}
+
+function formatChartPointDate(date: Date, period: Period): string {
+  return period === "ALL" ? formatDate(date, "MMM d, yyyy") : formatDate(date, "MMM d");
+}
+
+function computeLiveBalanceAtDate(
   account: StoredAccount,
   transactions: StoredTransaction[],
   exchangeRates: Record<string, number>,
+  asOf?: Date,
 ): number {
   const accountCurrency = account.currencyCode ?? "USD";
-  return account.openingBalanceCents + transactions.reduce((sum, tx) => {
+  const filtered = asOf
+    ? transactions.filter((tx) => !tx.date || new Date(tx.date) <= asOf)
+    : transactions;
+  return account.openingBalanceCents + filtered.reduce((sum, tx) => {
     const txCurrency = tx.currencyCode ?? accountCurrency;
     const amount = txCurrency !== accountCurrency
       ? convertCents(tx.amountCents, txCurrency, accountCurrency, exchangeRates)
@@ -83,6 +134,59 @@ function computeLiveBalance(
     if (tx.type === "expense") return sum - amount;
     return sum;
   }, 0);
+}
+
+function computeLiveBalance(
+  account: StoredAccount,
+  transactions: StoredTransaction[],
+  exchangeRates: Record<string, number>,
+): number {
+  return computeLiveBalanceAtDate(account, transactions, exchangeRates);
+}
+
+function computeNetWorthAtDate(
+  accounts: StoredAccount[],
+  transactions: StoredTransaction[],
+  exchangeRates: Record<string, number>,
+  homeCurrencyCode: string,
+  asOf?: Date,
+): number {
+  return accounts.reduce((total, account) => {
+    const balance = computeLiveBalanceAtDate(account, transactions, exchangeRates, asOf);
+    return total + convertCents(
+      balance,
+      account.currencyCode ?? homeCurrencyCode,
+      homeCurrencyCode,
+      exchangeRates,
+    );
+  }, 0);
+}
+
+function computeNetWorthSeries(
+  accounts: StoredAccount[],
+  transactions: StoredTransaction[],
+  exchangeRates: Record<string, number>,
+  homeCurrencyCode: string,
+  period: Period,
+): NetWorthPoint[] {
+  const now = new Date();
+  const start = getPeriodStart(period, transactions);
+  const NUM_POINTS = 30;
+  const spanMs = now.getTime() - start.getTime();
+  if (spanMs <= 0) {
+    const v = computeNetWorthAtDate(accounts, transactions, exchangeRates, homeCurrencyCode);
+    return [
+      { date: start, value: v },
+      { date: now, value: v },
+    ];
+  }
+  return Array.from({ length: NUM_POINTS }, (_, i) => {
+    const date = new Date(start.getTime() + (i / (NUM_POINTS - 1)) * spanMs);
+    return {
+      date,
+      value: computeNetWorthAtDate(accounts, transactions, exchangeRates, homeCurrencyCode, date),
+    };
+  });
 }
 
 type DisplayAccount = StoredAccount & { balanceCents: number };
@@ -111,18 +215,6 @@ function groupAccounts(
       };
     })
     .filter((g) => g.accounts.length > 0);
-}
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatBalanceAbbr(cents: number, symbol = "$"): string {
-  const sign = cents < 0 ? "-" : "";
-  const abs = Math.abs(cents);
-  if (abs >= 100_000_000) return `${sign}${symbol}${(abs / 100_000_000).toFixed(1)}M`;
-  if (abs >= 100_000) return `${sign}${symbol}${(abs / 100_000).toFixed(1)}k`;
-  return formatBalance(cents, symbol);
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -209,6 +301,224 @@ function DragHandleIcon() {
       <Circle cx={10} cy={13} fill={fill} r={1.5} />
       <Circle cx={15} cy={13} fill={fill} r={1.5} />
     </Svg>
+  );
+}
+
+// ─── NetWorthChart ────────────────────────────────────────────────────────────
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function NetWorthChart({
+  currencySymbol,
+  data,
+  period,
+  positive,
+}: {
+  currencySymbol: string;
+  data: NetWorthPoint[];
+  period: Period;
+  positive: boolean | null;
+}) {
+  const { width: windowWidth } = useWindowDimensions();
+  const HEIGHT = NET_WORTH_CHART_HEIGHT;
+  const TOOLTIP_WIDTH = 184;
+  const TOOLTIP_HEIGHT = 78;
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [chartWidth, setChartWidth] = useState(windowWidth);
+  const chartRef = useRef<View>(null);
+  const chartLeftRef = useRef(0);
+  const chartWidthRef = useRef(windowWidth);
+  const latestLocalXRef = useRef(0);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isScrubbingRef = useRef(false);
+
+  const lineColor =
+    positive === true
+      ? figmaColors.success["700"]
+      : positive === false
+      ? figmaColors.error["600"]
+      : figmaColors.grayNeutral["300"];
+  const hasChartData = data.length >= 2;
+  const chartData = hasChartData
+    ? data
+    : [
+        { date: new Date(), value: 0 },
+        { date: new Date(), value: 0 },
+      ];
+
+  const values = chartData.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const PAD_T = 16;
+  const PAD_B = 16;
+  const chartH = HEIGHT - PAD_T - PAD_B;
+
+  const pts = chartData.map((point, i) => ({
+    x: (i / (chartData.length - 1)) * chartWidth,
+    y: PAD_T + chartH - ((point.value - min) / range) * chartH,
+  }));
+
+  let linePath = `M${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`;
+  for (let i = 1; i < pts.length; i++) {
+    const prev = pts[i - 1];
+    const curr = pts[i];
+    const cpx = ((prev.x + curr.x) / 2).toFixed(2);
+    linePath += ` C${cpx},${prev.y.toFixed(2)} ${cpx},${curr.y.toFixed(2)} ${curr.x.toFixed(2)},${curr.y.toFixed(2)}`;
+  }
+  const fillPath = `${linePath} L${pts[pts.length - 1].x.toFixed(2)},${HEIGHT} L${pts[0].x.toFixed(2)},${HEIGHT} Z`;
+
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const selectNearestPoint = useCallback(
+    (x: number) => {
+      const safeWidth = Math.max(chartWidthRef.current, 1);
+      const index = Math.round((clamp(x, 0, safeWidth) / safeWidth) * (chartData.length - 1));
+      setSelectedIndex(clamp(index, 0, chartData.length - 1));
+    },
+    [chartData.length],
+  );
+
+  const updateChartMeasure = useCallback(() => {
+    chartRef.current?.measureInWindow((x, _y, measuredWidth) => {
+      chartLeftRef.current = x;
+      if (measuredWidth > 0) {
+        chartWidthRef.current = measuredWidth;
+        setChartWidth((current) => (current === measuredWidth ? current : measuredWidth));
+      }
+    });
+  }, []);
+
+  const updateLatestLocalX = useCallback((moveX: number) => {
+    latestLocalXRef.current = moveX - chartLeftRef.current;
+    return latestLocalXRef.current;
+  }, []);
+
+  const hideSelection = useCallback(() => {
+    clearLongPressTimer();
+    isScrubbingRef.current = false;
+    setSelectedIndex(null);
+  }, [clearLongPressTimer]);
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: (event) => {
+          latestLocalXRef.current = event.nativeEvent.locationX;
+          updateChartMeasure();
+          clearLongPressTimer();
+          longPressTimerRef.current = setTimeout(() => {
+            isScrubbingRef.current = true;
+            selectNearestPoint(latestLocalXRef.current);
+          }, 220);
+        },
+        onPanResponderMove: (_event, gestureState) => {
+          const x = updateLatestLocalX(gestureState.moveX);
+          if (!isScrubbingRef.current) return;
+          selectNearestPoint(x);
+        },
+        onPanResponderRelease: hideSelection,
+        onPanResponderTerminate: hideSelection,
+        onPanResponderTerminationRequest: () => !isScrubbingRef.current,
+        onShouldBlockNativeResponder: () => false,
+        onStartShouldSetPanResponder: () => true,
+      }),
+    [clearLongPressTimer, hideSelection, selectNearestPoint, updateChartMeasure, updateLatestLocalX],
+  );
+
+  useEffect(() => {
+    chartWidthRef.current = windowWidth;
+    setChartWidth(windowWidth);
+    updateChartMeasure();
+  }, [updateChartMeasure, windowWidth]);
+
+  useEffect(() => () => clearLongPressTimer(), [clearLongPressTimer]);
+
+  if (!hasChartData) {
+    return <View style={{ height: HEIGHT }} />;
+  }
+
+  const safeSelectedIndex =
+    selectedIndex === null ? null : clamp(selectedIndex, 0, chartData.length - 1);
+  const selectedPoint = safeSelectedIndex === null ? null : chartData[safeSelectedIndex];
+  const selectedPosition = safeSelectedIndex === null ? null : pts[safeSelectedIndex];
+  const tooltipLeft = selectedPosition
+    ? clamp(selectedPosition.x - TOOLTIP_WIDTH / 2, 8, Math.max(8, chartWidth - TOOLTIP_WIDTH - 8))
+    : 8;
+  const tooltipTop = 8;
+
+  return (
+    <View
+      ref={chartRef}
+      onLayout={(event) => {
+        const nextWidth = event.nativeEvent.layout.width || windowWidth;
+        chartWidthRef.current = nextWidth;
+        setChartWidth((current) => (current === nextWidth ? current : nextWidth));
+        updateChartMeasure();
+      }}
+      style={styles.chartWrap}
+      {...panResponder.panHandlers}
+    >
+      <Svg height={HEIGHT} width={chartWidth}>
+        <Defs>
+          <LinearGradient id="nwGrad" x1="0" x2="0" y1="0" y2="1">
+            <Stop offset="0" stopColor={lineColor} stopOpacity={0.18} />
+            <Stop offset="1" stopColor={lineColor} stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Path d={fillPath} fill="url(#nwGrad)" />
+        <Path d={linePath} fill="none" stroke={lineColor} strokeWidth={2} />
+        {selectedPosition ? (
+          <>
+            <Path
+              d={`M${selectedPosition.x.toFixed(2)},0 L${selectedPosition.x.toFixed(2)},${HEIGHT}`}
+              stroke={figmaColors.grayNeutral["400"]}
+              strokeDasharray="4 4"
+              strokeOpacity={0.45}
+              strokeWidth={1}
+            />
+            <Circle
+              cx={selectedPosition.x}
+              cy={selectedPosition.y}
+              fill={lineColor}
+              r={4}
+              stroke={figmaColors.base.white}
+              strokeWidth={2}
+            />
+          </>
+        ) : null}
+      </Svg>
+      {selectedPoint ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.chartTooltip,
+            {
+              left: tooltipLeft,
+              top: tooltipTop,
+              width: TOOLTIP_WIDTH,
+            },
+          ]}
+        >
+          <View style={styles.chartTooltipRow}>
+            <Text style={styles.chartTooltipLabel}>Date</Text>
+            <Text style={styles.chartTooltipValue}>{formatChartPointDate(selectedPoint.date, period)}</Text>
+          </View>
+          <View style={styles.chartTooltipRow}>
+            <Text style={styles.chartTooltipLabel}>Net Worth</Text>
+            <Text style={styles.chartTooltipValue}>{formatBalance(selectedPoint.value, currencySymbol)}</Text>
+          </View>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -373,6 +683,7 @@ export default function AccountsScreen() {
   const [allTransactions, setAllTransactions] = useState<StoredTransaction[]>([]);
   const [homeCurrencyCode, setHomeCurrencyCode] = useState("USD");
   const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({});
+  const [selectedPeriod, setSelectedPeriod] = useState<Period>("1Y");
 
   useFocusEffect(
     useCallback(() => {
@@ -412,6 +723,28 @@ export default function AccountsScreen() {
   }, [displayAccounts, hiddenAccountIds, homeCurrencyCode, exchangeRates]);
 
   const totalNetCents = totalAssetsCents + totalLiabilitiesCents;
+
+  const netWorthSeries = useMemo(
+    () => computeNetWorthSeries(storeAccounts, allTransactions, exchangeRates, homeCurrencyCode, selectedPeriod),
+    [storeAccounts, allTransactions, exchangeRates, homeCurrencyCode, selectedPeriod],
+  );
+
+  const periodStartNetWorth = useMemo(
+    () => computeNetWorthAtDate(
+      storeAccounts,
+      allTransactions,
+      exchangeRates,
+      homeCurrencyCode,
+      getPeriodStart(selectedPeriod, allTransactions),
+    ),
+    [storeAccounts, allTransactions, exchangeRates, homeCurrencyCode, selectedPeriod],
+  );
+
+  const netWorthChange = totalNetCents - periodStartNetWorth;
+  const netWorthChangePct =
+    periodStartNetWorth !== 0 ? (netWorthChange / Math.abs(periodStartNetWorth)) * 100 : 0;
+  const changePositive: boolean | null =
+    netWorthChange > 0 ? true : netWorthChange < 0 ? false : null;
 
   const [dragGroup, setDragGroup] = useState<AccountGroup | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -578,101 +911,140 @@ export default function AccountsScreen() {
         </View>
       )}
 
-      <View style={styles.divider} />
-
-      {/* Summary bar */}
-      <View style={styles.summaryBar}>
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>Assets</Text>
-          <Text style={[styles.summaryAmount, { color: figmaColors.success["700"] }]}>{formatBalanceAbbr(totalAssetsCents, currencySymbol)}</Text>
-        </View>
-        <View style={styles.summaryDivider} />
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>Liabilities</Text>
-          <Text style={[styles.summaryAmount, { color: figmaColors.error["700"] }]}>{formatBalanceAbbr(Math.abs(totalLiabilitiesCents), currencySymbol)}</Text>
-        </View>
-        <View style={styles.summaryDivider} />
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>Total</Text>
-          <Text style={styles.summaryAmount}>{formatBalanceAbbr(totalNetCents, currencySymbol)}</Text>
-        </View>
-      </View>
-
-      <View style={styles.divider} />
-
-      {/* Content */}
-      <View style={styles.content}>
-        {storeAccounts.length === 0 ? (
-          <View style={styles.emptyState}>
-            <AccountsEmptyIcon />
-            <Text style={styles.emptyTitle}>No accounts yet</Text>
-            <Text style={styles.emptySubtitle}>
-              {"Add an account to start\ntracking your money."}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setIsCreateOpen(true)}
-              style={({ pressed }) => [styles.emptyButton, pressed && { opacity: 0.85 }]}
-            >
-              <Text style={styles.emptyButtonText}>+ Add account</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <ScrollView
-            contentContainerStyle={styles.listContent}
-            scrollEnabled={dragIndex === null}
-            showsVerticalScrollIndicator={false}
+      {storeAccounts.length === 0 ? (
+        <View style={styles.emptyStateWrapper}>
+          <AccountsEmptyIcon />
+          <Text style={styles.emptyTitle}>No accounts yet</Text>
+          <Text style={styles.emptySubtitle}>{"Add an account to start\ntracking your money."}</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setIsCreateOpen(true)}
+            style={({ pressed }) => [styles.emptyButton, pressed && { opacity: 0.85 }]}
           >
+            <Text style={styles.emptyButtonText}>+ Add account</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <ScrollView
+          scrollEnabled={dragIndex === null}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Net Worth */}
+          <View style={styles.netWorthSection}>
+            <Text style={styles.netWorthLabel}>Net Worth</Text>
+            <Text style={styles.netWorthAmount}>{formatBalance(totalNetCents, currencySymbol)}</Text>
+            {netWorthChange !== 0 && (
+              <Text
+                style={[
+                  styles.changeText,
+                  { color: changePositive ? figmaColors.success["700"] : figmaColors.error["700"] },
+                ]}
+              >
+                {formatBalance(Math.abs(netWorthChange), currencySymbol)}
+                {" "}
+                ({changePositive ? "↑" : "↓"}{Math.abs(netWorthChangePct).toFixed(1)}%)
+                {" "}
+                <Text style={styles.changePeriodText}>
+                  {getPeriodChangeLabel(selectedPeriod)}
+                </Text>
+              </Text>
+            )}
+          </View>
+
+          {/* Chart */}
+          <NetWorthChart
+            currencySymbol={currencySymbol}
+            data={netWorthSeries}
+            period={selectedPeriod}
+            positive={changePositive}
+          />
+
+          {/* Period picker */}
+          <View style={styles.periodRow}>
+            {PERIODS.map((p) => (
+              <Pressable
+                key={p}
+                onPress={() => setSelectedPeriod(p)}
+                style={[styles.periodPill, selectedPeriod === p && styles.periodPillActive]}
+              >
+                <Text style={[styles.periodPillText, selectedPeriod === p && styles.periodPillTextActive]}>
+                  {p}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Stats bar */}
+          <View style={styles.divider} />
+          <View style={styles.summaryBar}>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Assets</Text>
+              <Text style={[styles.summaryAmount, { color: figmaColors.success["700"] }]}>
+                {formatBalance(totalAssetsCents, currencySymbol)}
+              </Text>
+            </View>
+            <View style={styles.summaryDivider} />
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Liabilities</Text>
+              <Text style={[styles.summaryAmount, { color: figmaColors.error["700"] }]}>
+                {formatBalance(Math.abs(totalLiabilitiesCents), currencySymbol)}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.divider} />
+
+          {/* Account list */}
+          <View style={styles.listContent}>
             {groups.map((groupData) => {
               const visibleAccounts = isEditMode
                 ? groupData.accounts
                 : groupData.accounts.filter((a) => !hiddenAccountIds.has(a.id));
               if (visibleAccounts.length === 0) return null;
               return (
-              <View
-                key={groupData.group}
-                onLayout={(e) => { groupYRef.current[groupData.group] = e.nativeEvent.layout.y; }}
-              >
                 <View
-                  onLayout={(e) => { groupHeaderHeightRef.current[groupData.group] = e.nativeEvent.layout.height; }}
-                  style={styles.groupHeader}
+                  key={groupData.group}
+                  onLayout={(e) => { groupYRef.current[groupData.group] = e.nativeEvent.layout.y; }}
                 >
-                  <Text style={styles.groupName}>{groupData.group}</Text>
-                  <Text style={[
-                    styles.groupTotal,
-                    groupData.totalCents > 0
-                      ? { color: figmaColors.grayNeutral["900"] }
-                      : groupData.totalCents < 0
-                        ? { color: figmaColors.error["600"] }
-                        : undefined,
-                  ]}>
-                    {formatBalance(groupData.totalCents, currencySymbols[homeCurrencyCode] ?? homeCurrencyCode)}
-                  </Text>
+                  <View
+                    onLayout={(e) => { groupHeaderHeightRef.current[groupData.group] = e.nativeEvent.layout.height; }}
+                    style={styles.groupHeader}
+                  >
+                    <Text style={styles.groupName}>{groupData.group}</Text>
+                    <Text style={[
+                      styles.groupTotal,
+                      groupData.totalCents > 0
+                        ? { color: figmaColors.grayNeutral["900"] }
+                        : groupData.totalCents < 0
+                          ? { color: figmaColors.error["600"] }
+                          : { color: figmaColors.grayNeutral["900"] },
+                    ]}>
+                      {formatBalance(groupData.totalCents, currencySymbols[homeCurrencyCode] ?? homeCurrencyCode)}
+                    </Text>
+                  </View>
+                  {visibleAccounts.map((account, index) => (
+                    <AccountRow
+                      account={account}
+                      balance={account.balanceCents}
+                      currencySymbol={currencySymbols[account.currencyCode ?? "USD"] ?? account.currencyCode ?? "$"}
+                      isDragging={dragGroup === groupData.group && dragIndex === index}
+                      isEditMode={isEditMode}
+                      isHidden={hiddenAccountIds.has(account.id)}
+                      key={account.id}
+                      onDelete={() => removeAccount(account.id)}
+                      onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
+                      onDragMove={(dy) => handleDragMove(groupData.group, dy)}
+                      onDragStart={(y0) => handleDragStart(groupData.group, index, y0)}
+                      onPress={() => router.push({ pathname: "/account-detail", params: { id: account.id } })}
+                      onToggleHidden={() => toggleHiddenAccount(account.id)}
+                      shift={getShift(groupData.group, index)}
+                    />
+                  ))}
                 </View>
-                {visibleAccounts.map((account, index) => (
-                  <AccountRow
-                    account={account}
-                    balance={account.balanceCents}
-                    currencySymbol={currencySymbols[account.currencyCode ?? "USD"] ?? account.currencyCode ?? "$"}
-                    isDragging={dragGroup === groupData.group && dragIndex === index}
-                    isEditMode={isEditMode}
-                    isHidden={hiddenAccountIds.has(account.id)}
-                    key={account.id}
-                    onDelete={() => removeAccount(account.id)}
-                    onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
-                    onDragMove={(dy) => handleDragMove(groupData.group, dy)}
-                    onDragStart={(y0) => handleDragStart(groupData.group, index, y0)}
-                    onPress={() => router.push({ pathname: "/account-detail", params: { id: account.id } })}
-                    onToggleHidden={() => toggleHiddenAccount(account.id)}
-                    shift={getShift(groupData.group, index)}
-                  />
-                ))}
-              </View>
               );
             })}
-          </ScrollView>
-        )}
-      </View>
+          </View>
+        </ScrollView>
+      )}
 
       {/* Floating drag ghost */}
       {dragGroup !== null && dragIndex !== null && (() => {
@@ -750,17 +1122,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
+    paddingBottom: 16,
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 16,
   },
   headerEdit: {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
+    paddingBottom: 16,
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 16,
   },
   headerTitle: {
     color: figmaColors.grayNeutral["900"],
@@ -791,16 +1163,101 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 36,
   },
+  // Net Worth
+  netWorthSection: {
+    gap: 4,
+    paddingBottom: 16,
+    paddingHorizontal: 20,
+    paddingTop: 4,
+  },
+  netWorthLabel: {
+    color: figmaColors.grayNeutral["500"],
+    fontFamily: fontFamily.medium,
+    fontSize: 13,
+    letterSpacing: -0.1,
+    lineHeight: 18,
+  },
+  netWorthAmount: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 36,
+    letterSpacing: -0.8,
+    lineHeight: 44,
+  },
+  changeText: {
+    fontFamily: fontFamily.medium,
+    fontSize: 14,
+    letterSpacing: -0.1,
+    lineHeight: 20,
+  },
+  changePeriodText: {
+    color: figmaColors.grayNeutral["500"],
+  },
+  chartWrap: {
+    height: NET_WORTH_CHART_HEIGHT,
+    position: "relative",
+  },
+  chartTooltip: {
+    backgroundColor: figmaColors.grayNeutral["900"],
+    borderRadius: 8,
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    position: "absolute",
+  },
+  chartTooltipRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  chartTooltipLabel: {
+    color: figmaColors.grayNeutral["400"],
+    fontFamily: fontFamily.medium,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  chartTooltipValue: {
+    color: figmaColors.base.white,
+    fontFamily: fontFamily.semiBold,
+    fontSize: 12,
+    lineHeight: 16,
+    marginLeft: 12,
+    textAlign: "right",
+  },
+  // Period picker
+  periodRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+  },
+  periodPill: {
+    alignItems: "center",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  periodPillActive: {
+    backgroundColor: figmaColors.grayNeutral["100"],
+  },
+  periodPillText: {
+    color: figmaColors.grayNeutral["500"],
+    fontFamily: fontFamily.medium,
+    fontSize: 13,
+    letterSpacing: -0.1,
+  },
+  periodPillTextActive: {
+    color: figmaColors.grayNeutral["700"],
+  },
+  // Summary bar
   divider: {
     backgroundColor: figmaColors.grayNeutral["200"],
     height: StyleSheet.hairlineWidth,
   },
-  content: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
   summaryBar: {
     flexDirection: "row",
+    paddingHorizontal: 20,
     paddingVertical: 16,
   },
   summaryItem: {
@@ -826,8 +1283,9 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
     lineHeight: 22,
   },
+  // Account list
   listContent: {
-    paddingBottom: 8,
+    paddingBottom: 100,
     paddingTop: 8,
   },
   groupHeader: {
@@ -835,7 +1293,7 @@ const styles = StyleSheet.create({
     backgroundColor: figmaColors.grayNeutral["50"],
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingHorizontal: 4,
+    paddingHorizontal: 20,
     paddingVertical: 11,
   },
   groupName: {
@@ -846,9 +1304,9 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   groupTotal: {
-    color: figmaColors.grayNeutral["400"],
-    fontFamily: fontFamily.bold,
-    fontSize: 15,
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.semiBold,
+    fontSize: 14,
     letterSpacing: -0.15,
     lineHeight: 20,
   },
@@ -858,7 +1316,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     minHeight: ACCOUNT_ITEM_HEIGHT,
-    paddingHorizontal: 4,
+    paddingHorizontal: 20,
     paddingVertical: 8,
   },
   accountRowPressable: {
@@ -892,13 +1350,14 @@ const styles = StyleSheet.create({
     letterSpacing: -0.1,
     lineHeight: 20,
   },
-  emptyState: {
+  // Empty state
+  emptyStateWrapper: {
     alignItems: "center",
     flex: 1,
     gap: 8,
     justifyContent: "center",
-    paddingHorizontal: 4,
-    paddingBottom: 40,
+    paddingBottom: 80,
+    paddingHorizontal: 20,
   },
   emptyTitle: {
     color: figmaColors.grayNeutral["900"],
