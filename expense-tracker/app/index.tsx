@@ -30,6 +30,7 @@ import {
 } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Reanimated, {
+  cancelAnimation,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
@@ -1723,7 +1724,7 @@ function CalendarDaySheet({
   const sheetHeight = Dimensions.get("window").height * 0.75;
   const [isMounted, setIsMounted] = useState(visible);
   const backdropOpacity = useRef(new Animated.Value(0)).current;
-  const sheetSwipeX = useRef(new Animated.Value(0)).current;
+  const sheetSwipeX = useSharedValue(0);
   const sheetTranslateY = useRef(new Animated.Value(sheetHeight)).current;
   const date = dayGroup?.date ?? new Date();
   const netCents = dayGroup?.netCents ?? 0;
@@ -1739,73 +1740,48 @@ function CalendarDaySheet({
     [date, onSelectDate],
   );
 
-  const sheetSwipeResponder = useMemo(
+  const sheetSwipeGesture = useMemo(
     () =>
-      PanResponder.create({
-        onPanResponderGrant: () => {
-          sheetSwipeX.stopAnimation();
-        },
-        onPanResponderMove: (_event, gestureState) => {
-          const clampedX = Math.max(-sheetWidth, Math.min(sheetWidth, gestureState.dx));
-          sheetSwipeX.setValue(clampedX);
-        },
-        onMoveShouldSetPanResponder: (_event, gestureState) => {
-          const horizontalMove = Math.abs(gestureState.dx);
-          const verticalMove = Math.abs(gestureState.dy);
-          return horizontalMove > 18 && horizontalMove > verticalMove * 1.4;
-        },
-        onMoveShouldSetPanResponderCapture: (_event, gestureState) => {
-          const horizontalMove = Math.abs(gestureState.dx);
-          const verticalMove = Math.abs(gestureState.dy);
-          return horizontalMove > 18 && horizontalMove > verticalMove * 1.4;
-        },
-        onPanResponderRelease: (_event, gestureState) => {
-          const horizontalMove = Math.abs(gestureState.dx);
-          const horizontalVelocity = Math.abs(gestureState.vx);
-          const shouldChangeDate = horizontalMove > 60 || horizontalVelocity > 0.45;
+      Gesture.Pan()
+        .activeOffsetX([-4, 4])
+        .failOffsetY([-24, 24])
+        .onBegin(() => {
+          cancelAnimation(sheetSwipeX);
+        })
+        .onUpdate((event) => {
+          sheetSwipeX.value = Math.max(-sheetWidth, Math.min(sheetWidth, event.translationX));
+        })
+        .onEnd((event) => {
+          const horizontalMove = Math.abs(event.translationX);
+          const horizontalVelocity = Math.abs(event.velocityX);
+          const shouldChangeDate = horizontalMove > 44 || horizontalVelocity > 420;
           if (!shouldChangeDate) {
-            Animated.spring(sheetSwipeX, {
-              bounciness: 0,
-              speed: 18,
-              toValue: 0,
-              useNativeDriver: true,
-            }).start();
+            sheetSwipeX.value = withSpring(0, { damping: 22, stiffness: 260 });
             return;
           }
 
-          const direction = gestureState.dx < 0 ? 1 : -1;
+          const direction = event.translationX < 0 ? 1 : -1;
           const exitX = direction === 1 ? -sheetWidth : sheetWidth;
           const enterX = direction === 1 ? sheetWidth : -sheetWidth;
 
-          Animated.timing(sheetSwipeX, {
-            duration: 140,
-            toValue: exitX,
-            useNativeDriver: true,
-          }).start(({ finished }) => {
+          sheetSwipeX.value = withTiming(exitX, { duration: 110 }, (finished) => {
             if (!finished) return;
-            shiftDate(direction);
-            sheetSwipeX.setValue(enterX);
-            Animated.spring(sheetSwipeX, {
-              bounciness: 0,
-              speed: 18,
-              toValue: 0,
-              useNativeDriver: true,
-            }).start();
+            sheetSwipeX.value = enterX;
+            runOnJS(shiftDate)(direction);
+            sheetSwipeX.value = withSpring(0, { damping: 22, stiffness: 260 });
           });
-        },
-        onPanResponderTerminate: () => {
-          Animated.spring(sheetSwipeX, {
-            bounciness: 0,
-            speed: 18,
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
-        },
-        onPanResponderTerminationRequest: () => true,
-        onShouldBlockNativeResponder: () => false,
-      }),
+        })
+        .onFinalize((_event, success) => {
+          if (!success) {
+            sheetSwipeX.value = withSpring(0, { damping: 22, stiffness: 260 });
+          }
+        }),
     [sheetSwipeX, sheetWidth, shiftDate],
   );
+
+  const sheetSwipeStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: sheetSwipeX.value }],
+  }));
 
   const animateClosed = useCallback(
     (afterClose?: () => void) => {
@@ -1847,7 +1823,7 @@ function CalendarDaySheet({
     if (visible) {
       setIsMounted(true);
       backdropOpacity.setValue(0);
-      sheetSwipeX.setValue(0);
+      sheetSwipeX.value = 0;
       sheetTranslateY.setValue(sheetHeight);
       Animated.parallel([
         Animated.timing(backdropOpacity, {
@@ -1882,42 +1858,38 @@ function CalendarDaySheet({
             { height: sheetHeight, transform: [{ translateY: sheetTranslateY }] },
           ]}
         >
-          <Animated.View
-            style={[
-              styles.calendarSheetSwipeContent,
-              { transform: [{ translateX: sheetSwipeX }] },
-            ]}
-            {...sheetSwipeResponder.panHandlers}
-          >
-            <View style={styles.calendarSheetHeader}>
-              <Text style={styles.calendarSheetTitle}>{format(date, "EEE, d MMM")}</Text>
-              <Text style={styles.calendarSheetNet}>
-                {netSign}{formatCents(Math.abs(netCents), currencySymbol)}
-              </Text>
-            </View>
-            <View style={styles.calendarSheetDivider} />
+          <GestureDetector gesture={sheetSwipeGesture}>
+            <Reanimated.View style={[styles.calendarSheetSwipeContent, sheetSwipeStyle]}>
+              <View style={styles.calendarSheetHeader}>
+                <Text style={styles.calendarSheetTitle}>{format(date, "EEE, d MMM")}</Text>
+                <Text style={styles.calendarSheetNet}>
+                  {netSign}{formatCents(Math.abs(netCents), currencySymbol)}
+                </Text>
+              </View>
+              <View style={styles.calendarSheetDivider} />
 
-            <ScrollView
-              contentContainerStyle={styles.calendarSheetListContent}
-              showsVerticalScrollIndicator={false}
-            >
-              {transactionsForDay.length === 0 ? (
-                <EmptyLogState />
-              ) : (
-                transactionsForDay.map((tx) => (
-                  <TransactionRow
-                    currencyCode={currencyCode}
-                    currencySymbol={currencySymbol}
-                    exchangeRates={exchangeRates}
-                    key={tx.id}
-                    onDelete={() => onDeleteTransaction(tx)}
-                    onPress={() => openTransaction(tx)}
-                    transaction={tx}
-                  />
-                ))
-              )}
-            </ScrollView>
-          </Animated.View>
+              <ScrollView
+                contentContainerStyle={styles.calendarSheetListContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {transactionsForDay.length === 0 ? (
+                  <EmptyLogState />
+                ) : (
+                  transactionsForDay.map((tx) => (
+                    <TransactionRow
+                      currencyCode={currencyCode}
+                      currencySymbol={currencySymbol}
+                      exchangeRates={exchangeRates}
+                      key={tx.id}
+                      onDelete={() => onDeleteTransaction(tx)}
+                      onPress={() => openTransaction(tx)}
+                      transaction={tx}
+                    />
+                  ))
+                )}
+              </ScrollView>
+            </Reanimated.View>
+          </GestureDetector>
 
           <Pressable
             accessibilityLabel="Add entry for selected date"
