@@ -6,6 +6,7 @@ import { StatusBar } from "expo-status-bar";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -849,9 +850,8 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
       .sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [monthTransactions, exchangeRates, currency.code]);
 
-  const selectedCalendarDayGroup = useMemo<DayGroup | null>(() => {
-    if (!selectedCalendarDate) return null;
-    const dateKey = localDateKeyFromDate(selectedCalendarDate);
+  const getCalendarDayGroup = useCallback((calendarDate: Date): DayGroup => {
+    const dateKey = localDateKeyFromDate(calendarDate);
     const txs = transactions.filter((tx) => localDateKey(tx.date) === dateKey);
     return {
       date: localDateFromKey(dateKey),
@@ -862,7 +862,12 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
       }, 0),
       transactions: txs,
     };
-  }, [currency.code, exchangeRates, selectedCalendarDate, transactions]);
+  }, [currency.code, exchangeRates, transactions]);
+
+  const selectedCalendarDayGroup = useMemo<DayGroup | null>(() => {
+    if (!selectedCalendarDate) return null;
+    return getCalendarDayGroup(selectedCalendarDate);
+  }, [getCalendarDayGroup, selectedCalendarDate]);
 
   const netAbsCents = Math.abs(netCents);
   const netWhole = `${netCents < 0 ? "−" : ""}${currencySymbol}${Math.floor(netAbsCents / 100).toLocaleString()}.`;
@@ -1063,6 +1068,7 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
         currencySymbol={currencySymbol}
         dayGroup={selectedCalendarDayGroup}
         exchangeRates={exchangeRates}
+        getDayGroup={getCalendarDayGroup}
         onAdd={(date) => {
           setSelectedCalendarDate(null);
           router.push({
@@ -1696,11 +1702,65 @@ function CalendarSheetChevron({ direction }: { direction: "left" | "right" }) {
   );
 }
 
+function CalendarDayPane({
+  currencyCode,
+  currencySymbol,
+  dayGroup,
+  exchangeRates,
+  onDeleteTransaction,
+  onOpenTransaction,
+  width,
+}: {
+  currencyCode: string;
+  currencySymbol: string;
+  dayGroup: DayGroup;
+  exchangeRates: Record<string, number>;
+  onDeleteTransaction: (transaction: Transaction) => void;
+  onOpenTransaction: (transaction: Transaction) => void;
+  width: number;
+}) {
+  const netSign = dayGroup.netCents >= 0 ? "+" : "−";
+
+  return (
+    <View style={[styles.calendarSheetPane, { width }]}>
+      <View style={styles.calendarSheetHeader}>
+        <Text style={styles.calendarSheetTitle}>{format(dayGroup.date, "EEE, d MMM")}</Text>
+        <Text style={styles.calendarSheetNet}>
+          {netSign}{formatCents(Math.abs(dayGroup.netCents), currencySymbol)}
+        </Text>
+      </View>
+      <View style={styles.calendarSheetDivider} />
+
+      <ScrollView
+        contentContainerStyle={styles.calendarSheetListContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {dayGroup.transactions.length === 0 ? (
+          <EmptyLogState />
+        ) : (
+          dayGroup.transactions.map((tx) => (
+            <TransactionRow
+              currencyCode={currencyCode}
+              currencySymbol={currencySymbol}
+              exchangeRates={exchangeRates}
+              key={tx.id}
+              onDelete={() => onDeleteTransaction(tx)}
+              onPress={() => onOpenTransaction(tx)}
+              transaction={tx}
+            />
+          ))
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
 function CalendarDaySheet({
   currencyCode,
   currencySymbol,
   dayGroup,
   exchangeRates,
+  getDayGroup,
   onAdd,
   onClose,
   onDeleteTransaction,
@@ -1712,6 +1772,7 @@ function CalendarDaySheet({
   currencySymbol: string;
   dayGroup: DayGroup | null;
   exchangeRates: Record<string, number>;
+  getDayGroup: (date: Date) => DayGroup;
   onAdd: (date: Date) => void;
   onClose: () => void;
   onDeleteTransaction: (transaction: Transaction) => void;
@@ -1727,9 +1788,18 @@ function CalendarDaySheet({
   const sheetSwipeX = useSharedValue(0);
   const sheetTranslateY = useRef(new Animated.Value(sheetHeight)).current;
   const date = dayGroup?.date ?? new Date();
-  const netCents = dayGroup?.netCents ?? 0;
-  const netSign = netCents >= 0 ? "+" : "−";
-  const transactionsForDay = dayGroup?.transactions ?? [];
+  const paneGroups = useMemo(() => {
+    const previousDate = new Date(date);
+    previousDate.setDate(previousDate.getDate() - 1);
+    const nextDate = new Date(date);
+    nextDate.setDate(nextDate.getDate() + 1);
+
+    return [
+      getDayGroup(previousDate),
+      dayGroup ?? getDayGroup(date),
+      getDayGroup(nextDate),
+    ];
+  }, [date, dayGroup, getDayGroup]);
 
   const shiftDate = useCallback(
     (days: number) => {
@@ -1762,13 +1832,10 @@ function CalendarDaySheet({
 
           const direction = event.translationX < 0 ? 1 : -1;
           const exitX = direction === 1 ? -sheetWidth : sheetWidth;
-          const enterX = direction === 1 ? sheetWidth : -sheetWidth;
 
           sheetSwipeX.value = withTiming(exitX, { duration: 110 }, (finished) => {
             if (!finished) return;
-            sheetSwipeX.value = enterX;
             runOnJS(shiftDate)(direction);
-            sheetSwipeX.value = withSpring(0, { damping: 22, stiffness: 260 });
           });
         })
         .onFinalize((_event, success) => {
@@ -1780,8 +1847,12 @@ function CalendarDaySheet({
   );
 
   const sheetSwipeStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: sheetSwipeX.value }],
+    transform: [{ translateX: -sheetWidth + sheetSwipeX.value }],
   }));
+
+  useLayoutEffect(() => {
+    sheetSwipeX.value = 0;
+  }, [dayGroup?.dateKey, sheetSwipeX]);
 
   const animateClosed = useCallback(
     (afterClose?: () => void) => {
@@ -1859,35 +1930,25 @@ function CalendarDaySheet({
           ]}
         >
           <GestureDetector gesture={sheetSwipeGesture}>
-            <Reanimated.View style={[styles.calendarSheetSwipeContent, sheetSwipeStyle]}>
-              <View style={styles.calendarSheetHeader}>
-                <Text style={styles.calendarSheetTitle}>{format(date, "EEE, d MMM")}</Text>
-                <Text style={styles.calendarSheetNet}>
-                  {netSign}{formatCents(Math.abs(netCents), currencySymbol)}
-                </Text>
-              </View>
-              <View style={styles.calendarSheetDivider} />
-
-              <ScrollView
-                contentContainerStyle={styles.calendarSheetListContent}
-                showsVerticalScrollIndicator={false}
-              >
-                {transactionsForDay.length === 0 ? (
-                  <EmptyLogState />
-                ) : (
-                  transactionsForDay.map((tx) => (
-                    <TransactionRow
-                      currencyCode={currencyCode}
-                      currencySymbol={currencySymbol}
-                      exchangeRates={exchangeRates}
-                      key={tx.id}
-                      onDelete={() => onDeleteTransaction(tx)}
-                      onPress={() => openTransaction(tx)}
-                      transaction={tx}
-                    />
-                  ))
-                )}
-              </ScrollView>
+            <Reanimated.View
+              style={[
+                styles.calendarSheetSwipeContent,
+                { width: sheetWidth * 3 },
+                sheetSwipeStyle,
+              ]}
+            >
+              {paneGroups.map((group) => (
+                <CalendarDayPane
+                  currencyCode={currencyCode}
+                  currencySymbol={currencySymbol}
+                  dayGroup={group}
+                  exchangeRates={exchangeRates}
+                  key={group.dateKey}
+                  onDeleteTransaction={onDeleteTransaction}
+                  onOpenTransaction={openTransaction}
+                  width={sheetWidth}
+                />
+              ))}
             </Reanimated.View>
           </GestureDetector>
 
@@ -2676,6 +2737,10 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   calendarSheetSwipeContent: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  calendarSheetPane: {
     flex: 1,
   },
   calendarSheetHeader: {
