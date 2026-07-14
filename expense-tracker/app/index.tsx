@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
   Animated,
+  Dimensions,
   Image,
   Modal,
   PanResponder,
@@ -313,6 +314,13 @@ function localDateKey(isoString: string): string {
 function localDateFromKey(key: string): Date {
   const [y, m, d] = key.split("-").map(Number);
   return new Date(y, m - 1, d);
+}
+
+function localDateKeyFromDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function getCalendarDays(year: number, month: number, weekStartIndex = 1) {
@@ -635,6 +643,7 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
     recorded?: string;
   }>();
   const [isCalendarView, setIsCalendarView] = useState(false);
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date | null>(null);
   const [isMonthYearPickerOpen, setIsMonthYearPickerOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => new Date());
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -839,6 +848,21 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
       .sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [monthTransactions, exchangeRates, currency.code]);
 
+  const selectedCalendarDayGroup = useMemo<DayGroup | null>(() => {
+    if (!selectedCalendarDate) return null;
+    const dateKey = localDateKeyFromDate(selectedCalendarDate);
+    const txs = transactions.filter((tx) => localDateKey(tx.date) === dateKey);
+    return {
+      date: localDateFromKey(dateKey),
+      dateKey,
+      netCents: txs.reduce((sum, tx) => {
+        const cents = convertCents(tx.amountCents, tx.currencyCode, currency.code, exchangeRates);
+        return tx.type === "income" ? sum + cents : tx.type === "expense" ? sum - cents : sum;
+      }, 0),
+      transactions: txs,
+    };
+  }, [currency.code, exchangeRates, selectedCalendarDate, transactions]);
+
   const netAbsCents = Math.abs(netCents);
   const netWhole = `${netCents < 0 ? "−" : ""}${currencySymbol}${Math.floor(netAbsCents / 100).toLocaleString()}.`;
   const netFrac = String(netAbsCents % 100).padStart(2, "0");
@@ -940,6 +964,7 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
             currencyCode={currency.code}
             exchangeRates={exchangeRates}
             monthTransactions={monthTransactions}
+            onSelectDate={setSelectedCalendarDate}
             selectedMonth={selectedMonth}
             weekStartIndex={weekStartIndex}
           />
@@ -1030,6 +1055,30 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
         onSelectMonth={(month) => setSelectedMonth(month)}
         selectedMonth={selectedMonth}
         visible={isMonthYearPickerOpen}
+      />
+
+      <CalendarDaySheet
+        currencyCode={currency.code}
+        currencySymbol={currencySymbol}
+        dayGroup={selectedCalendarDayGroup}
+        exchangeRates={exchangeRates}
+        onAdd={(date) => {
+          setSelectedCalendarDate(null);
+          router.push({
+            pathname: "/add-entry",
+            params: { date: date.toISOString() },
+          });
+        }}
+        onClose={() => setSelectedCalendarDate(null)}
+        onDeleteTransaction={handleDeleteTransaction}
+        onEditTransaction={(transaction) =>
+          router.push({
+            pathname: "/add-entry",
+            params: { transactionId: transaction.id },
+          })
+        }
+        onSelectDate={setSelectedCalendarDate}
+        visible={selectedCalendarDate !== null}
       />
 
       <ToastNotification
@@ -1542,12 +1591,14 @@ function CalendarMonthGrid({
   currencyCode,
   exchangeRates,
   monthTransactions,
+  onSelectDate,
   selectedMonth,
   weekStartIndex,
 }: {
   currencyCode: string;
   exchangeRates: Record<string, number>;
   monthTransactions: Transaction[];
+  onSelectDate: (date: Date) => void;
   selectedMonth: Date;
   weekStartIndex: number;
 }) {
@@ -1589,9 +1640,18 @@ function CalendarMonthGrid({
           <View key={`week-${rowIndex}`} style={styles.calendarRow}>
             {week.map((day, columnIndex) => {
               const totals = day !== null ? dayTotals.get(day) : undefined;
+              const date = day !== null
+                ? new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), day)
+                : null;
               return (
-                <View
+                <Pressable
                   key={`${rowIndex}-${columnIndex}`}
+                  accessibilityLabel={date ? `Show entries for ${format(date, "EEEE, d MMMM yyyy")}` : undefined}
+                  accessibilityRole={date ? "button" : undefined}
+                  disabled={date === null}
+                  onPress={() => {
+                    if (date) onSelectDate(date);
+                  }}
                   style={[
                     styles.calendarDayCell,
                     day === null && styles.calendarDayCellHidden,
@@ -1610,13 +1670,211 @@ function CalendarMonthGrid({
                       </Text>
                     )}
                   </View>
-                </View>
+                </Pressable>
               );
             })}
           </View>
         ))}
       </View>
     </View>
+  );
+}
+
+function CalendarSheetChevron({ direction }: { direction: "left" | "right" }) {
+  const d = direction === "left" ? "M15 18l-6-6 6-6" : "M9 6l6 6-6 6";
+  return (
+    <Svg fill="none" height={24} viewBox="0 0 24 24" width={24}>
+      <Path
+        d={d}
+        stroke={figmaColors.grayNeutral["600"]}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2.5}
+      />
+    </Svg>
+  );
+}
+
+function CalendarDaySheet({
+  currencyCode,
+  currencySymbol,
+  dayGroup,
+  exchangeRates,
+  onAdd,
+  onClose,
+  onDeleteTransaction,
+  onEditTransaction,
+  onSelectDate,
+  visible,
+}: {
+  currencyCode: string;
+  currencySymbol: string;
+  dayGroup: DayGroup | null;
+  exchangeRates: Record<string, number>;
+  onAdd: (date: Date) => void;
+  onClose: () => void;
+  onDeleteTransaction: (transaction: Transaction) => void;
+  onEditTransaction: (transaction: Transaction) => void;
+  onSelectDate: (date: Date) => void;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const sheetHeight = Dimensions.get("window").height * 0.75;
+  const [isMounted, setIsMounted] = useState(visible);
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const sheetTranslateY = useRef(new Animated.Value(sheetHeight)).current;
+  const date = dayGroup?.date ?? new Date();
+  const netCents = dayGroup?.netCents ?? 0;
+  const netSign = netCents >= 0 ? "+" : "−";
+  const transactionsForDay = dayGroup?.transactions ?? [];
+
+  const shiftDate = useCallback(
+    (days: number) => {
+      const nextDate = new Date(date);
+      nextDate.setDate(nextDate.getDate() + days);
+      onSelectDate(nextDate);
+    },
+    [date, onSelectDate],
+  );
+
+  const animateClosed = useCallback(
+    (afterClose?: () => void) => {
+      Animated.parallel([
+        Animated.timing(backdropOpacity, {
+          duration: 180,
+          toValue: 0,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sheetTranslateY, {
+          duration: 220,
+          toValue: sheetHeight,
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (!finished) return;
+        setIsMounted(false);
+        afterClose?.();
+      });
+    },
+    [backdropOpacity, sheetHeight, sheetTranslateY],
+  );
+
+  const closeSheet = useCallback(() => {
+    animateClosed(onClose);
+  }, [animateClosed, onClose]);
+
+  useEffect(() => {
+    if (visible) {
+      setIsMounted(true);
+      backdropOpacity.setValue(0);
+      sheetTranslateY.setValue(sheetHeight);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, {
+          duration: 180,
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+        Animated.spring(sheetTranslateY, {
+          bounciness: 0,
+          speed: 18,
+          toValue: 0,
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return;
+    }
+
+    animateClosed();
+  }, [animateClosed, backdropOpacity, sheetHeight, sheetTranslateY, visible]);
+
+  if (!isMounted) return null;
+
+  return (
+    <Modal animationType="none" onRequestClose={closeSheet} transparent visible={isMounted}>
+      <View style={styles.calendarSheetRoot}>
+        <Animated.View style={[styles.calendarSheetBackdrop, { opacity: backdropOpacity }]}>
+          <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
+        </Animated.View>
+        <Animated.View
+          style={[
+            styles.calendarSheet,
+            { height: sheetHeight, transform: [{ translateY: sheetTranslateY }] },
+          ]}
+        >
+          <View style={styles.calendarSheetHeader}>
+            <Text style={styles.calendarSheetTitle}>{format(date, "EEE, d MMM")}</Text>
+            <Text style={styles.calendarSheetNet}>
+              {netSign}{formatCents(Math.abs(netCents), currencySymbol)}
+            </Text>
+          </View>
+          <View style={styles.calendarSheetDivider} />
+
+          <ScrollView
+            contentContainerStyle={styles.calendarSheetListContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {transactionsForDay.length === 0 ? (
+              <EmptyLogState />
+            ) : (
+              transactionsForDay.map((tx) => (
+                <TransactionRow
+                  currencyCode={currencyCode}
+                  currencySymbol={currencySymbol}
+                  exchangeRates={exchangeRates}
+                  key={tx.id}
+                  onDelete={() => onDeleteTransaction(tx)}
+                  onPress={() => onEditTransaction(tx)}
+                  transaction={tx}
+                />
+              ))
+            )}
+          </ScrollView>
+
+          <Pressable
+            accessibilityLabel="Add entry for selected date"
+            accessibilityRole="button"
+            onPress={() => onAdd(date)}
+            style={[styles.calendarSheetFab, { bottom: insets.bottom + 92 }]}
+          >
+            <MingCuteIcon color={figmaColors.base.white} name="add-fill" size={28} />
+          </Pressable>
+
+          <View style={[styles.calendarSheetBottomBar, { paddingBottom: insets.bottom }]}>
+            <View style={styles.calendarSheetDateControls}>
+              <Pressable
+                accessibilityLabel="Previous day"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => shiftDate(-1)}
+                style={styles.calendarSheetNavButton}
+              >
+                <CalendarSheetChevron direction="left" />
+              </Pressable>
+              <Text numberOfLines={1} style={styles.calendarSheetBottomDate}>
+                {format(date, "EEE, d MMM yyyy")}
+              </Text>
+              <Pressable
+                accessibilityLabel="Next day"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => shiftDate(1)}
+                style={styles.calendarSheetNavButton}
+              >
+                <CalendarSheetChevron direction="right" />
+              </Pressable>
+            </View>
+            <Pressable
+              accessibilityLabel="Close selected date"
+              accessibilityRole="button"
+              onPress={closeSheet}
+              style={styles.calendarSheetCloseButton}
+            >
+              <Text style={styles.calendarSheetCloseText}>Close</Text>
+            </Pressable>
+          </View>
+        </Animated.View>
+      </View>
+    </Modal>
   );
 }
 
@@ -2337,6 +2595,115 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.medium,
     fontSize: 10,
     lineHeight: 14,
+  },
+  calendarSheetRoot: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  calendarSheetBackdrop: {
+    backgroundColor: "rgba(17, 24, 39, 0.38)",
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
+  calendarSheet: {
+    backgroundColor: figmaColors.bg,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    overflow: "hidden",
+  },
+  calendarSheetHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingTop: 28,
+    paddingBottom: 16,
+  },
+  calendarSheetTitle: {
+    color: figmaColors.grayNeutral["500"],
+    fontFamily: fontFamily.bold,
+    fontSize: 16,
+    letterSpacing: -0.15,
+  },
+  calendarSheetNet: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 18,
+    letterSpacing: -0.2,
+  },
+  calendarSheetDivider: {
+    backgroundColor: figmaColors.grayNeutral["200"],
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: 20,
+  },
+  calendarSheetListContent: {
+    flexGrow: 1,
+    paddingBottom: 160,
+    paddingTop: 8,
+  },
+  calendarSheetFab: {
+    alignItems: "center",
+    backgroundColor: figmaColors.blue["500"],
+    borderRadius: 999,
+    height: 56,
+    justifyContent: "center",
+    position: "absolute",
+    right: 16,
+    shadowColor: figmaColors.base.black,
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    width: 56,
+  },
+  calendarSheetBottomBar: {
+    alignItems: "center",
+    backgroundColor: figmaColors.base.white,
+    borderTopColor: figmaColors.grayNeutral["100"],
+    borderTopWidth: StyleSheet.hairlineWidth,
+    bottom: 0,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    left: 0,
+    minHeight: 80,
+    paddingLeft: 4,
+    paddingRight: 16,
+    paddingTop: 8,
+    position: "absolute",
+    right: 0,
+  },
+  calendarSheetDateControls: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 1,
+    gap: 8,
+  },
+  calendarSheetNavButton: {
+    alignItems: "center",
+    height: 40,
+    justifyContent: "center",
+    width: 32,
+  },
+  calendarSheetBottomDate: {
+    color: figmaColors.grayNeutral["600"],
+    fontFamily: fontFamily.semiBold,
+    fontSize: 17,
+    letterSpacing: -0.2,
+    maxWidth: 210,
+  },
+  calendarSheetCloseButton: {
+    alignItems: "center",
+    minHeight: 44,
+    justifyContent: "center",
+    paddingLeft: 16,
+  },
+  calendarSheetCloseText: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.medium,
+    fontSize: 17,
+    letterSpacing: -0.2,
   },
   emptyStateContainer: {
     alignItems: "center",

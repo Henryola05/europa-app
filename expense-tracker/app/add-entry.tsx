@@ -3214,14 +3214,19 @@ function ImageUploadBottomSheet({
 
 export default function AddEntryScreen() {
   const router = useRouter();
-  const { transactionId: routeTransactionId, accountId: routeAccountId } = useLocalSearchParams<{
+  const { transactionId: routeTransactionId, accountId: routeAccountId, date: routeDate } = useLocalSearchParams<{
     transactionId?: string;
     accountId?: string;
+    date?: string;
   }>();
   const insets = useSafeAreaInsets();
   const { categoryColors } = useCategoriesStore();
   const transactionId =
     typeof routeTransactionId === "string" ? routeTransactionId : undefined;
+  const initialDate =
+    typeof routeDate === "string" && !Number.isNaN(new Date(routeDate).getTime())
+      ? new Date(routeDate)
+      : new Date();
   const isEditing = transactionId !== undefined;
   const editInitializedRef = useRef(false);
   const [transactionType, setTransactionType] =
@@ -3232,7 +3237,7 @@ export default function AddEntryScreen() {
   const [selectedCurrency, setSelectedCurrency] = useState<Currency>(
     currencies.find((c) => c.code === "USD") ?? currencies[0],
   );
-  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState(() => initialDate);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [recurringOption, setRecurringOption] = useState("Never");
   const [isRecurringSheetOpen, setIsRecurringSheetOpen] = useState(false);
