@@ -1719,9 +1719,11 @@ function CalendarDaySheet({
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const sheetWidth = Dimensions.get("window").width;
   const sheetHeight = Dimensions.get("window").height * 0.75;
   const [isMounted, setIsMounted] = useState(visible);
   const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const sheetSwipeX = useRef(new Animated.Value(0)).current;
   const sheetTranslateY = useRef(new Animated.Value(sheetHeight)).current;
   const date = dayGroup?.date ?? new Date();
   const netCents = dayGroup?.netCents ?? 0;
@@ -1735,6 +1737,74 @@ function CalendarDaySheet({
       onSelectDate(nextDate);
     },
     [date, onSelectDate],
+  );
+
+  const sheetSwipeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onPanResponderGrant: () => {
+          sheetSwipeX.stopAnimation();
+        },
+        onPanResponderMove: (_event, gestureState) => {
+          const clampedX = Math.max(-sheetWidth, Math.min(sheetWidth, gestureState.dx));
+          sheetSwipeX.setValue(clampedX);
+        },
+        onMoveShouldSetPanResponder: (_event, gestureState) => {
+          const horizontalMove = Math.abs(gestureState.dx);
+          const verticalMove = Math.abs(gestureState.dy);
+          return horizontalMove > 18 && horizontalMove > verticalMove * 1.4;
+        },
+        onMoveShouldSetPanResponderCapture: (_event, gestureState) => {
+          const horizontalMove = Math.abs(gestureState.dx);
+          const verticalMove = Math.abs(gestureState.dy);
+          return horizontalMove > 18 && horizontalMove > verticalMove * 1.4;
+        },
+        onPanResponderRelease: (_event, gestureState) => {
+          const horizontalMove = Math.abs(gestureState.dx);
+          const horizontalVelocity = Math.abs(gestureState.vx);
+          const shouldChangeDate = horizontalMove > 60 || horizontalVelocity > 0.45;
+          if (!shouldChangeDate) {
+            Animated.spring(sheetSwipeX, {
+              bounciness: 0,
+              speed: 18,
+              toValue: 0,
+              useNativeDriver: true,
+            }).start();
+            return;
+          }
+
+          const direction = gestureState.dx < 0 ? 1 : -1;
+          const exitX = direction === 1 ? -sheetWidth : sheetWidth;
+          const enterX = direction === 1 ? sheetWidth : -sheetWidth;
+
+          Animated.timing(sheetSwipeX, {
+            duration: 140,
+            toValue: exitX,
+            useNativeDriver: true,
+          }).start(({ finished }) => {
+            if (!finished) return;
+            shiftDate(direction);
+            sheetSwipeX.setValue(enterX);
+            Animated.spring(sheetSwipeX, {
+              bounciness: 0,
+              speed: 18,
+              toValue: 0,
+              useNativeDriver: true,
+            }).start();
+          });
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(sheetSwipeX, {
+            bounciness: 0,
+            speed: 18,
+            toValue: 0,
+            useNativeDriver: true,
+          }).start();
+        },
+        onPanResponderTerminationRequest: () => true,
+        onShouldBlockNativeResponder: () => false,
+      }),
+    [sheetSwipeX, sheetWidth, shiftDate],
   );
 
   const animateClosed = useCallback(
@@ -1777,6 +1847,7 @@ function CalendarDaySheet({
     if (visible) {
       setIsMounted(true);
       backdropOpacity.setValue(0);
+      sheetSwipeX.setValue(0);
       sheetTranslateY.setValue(sheetHeight);
       Animated.parallel([
         Animated.timing(backdropOpacity, {
@@ -1795,7 +1866,7 @@ function CalendarDaySheet({
     }
 
     animateClosed();
-  }, [animateClosed, backdropOpacity, sheetHeight, sheetTranslateY, visible]);
+  }, [animateClosed, backdropOpacity, sheetHeight, sheetSwipeX, sheetTranslateY, visible]);
 
   if (!isMounted) return null;
 
@@ -1811,34 +1882,42 @@ function CalendarDaySheet({
             { height: sheetHeight, transform: [{ translateY: sheetTranslateY }] },
           ]}
         >
-          <View style={styles.calendarSheetHeader}>
-            <Text style={styles.calendarSheetTitle}>{format(date, "EEE, d MMM")}</Text>
-            <Text style={styles.calendarSheetNet}>
-              {netSign}{formatCents(Math.abs(netCents), currencySymbol)}
-            </Text>
-          </View>
-          <View style={styles.calendarSheetDivider} />
-
-          <ScrollView
-            contentContainerStyle={styles.calendarSheetListContent}
-            showsVerticalScrollIndicator={false}
+          <Animated.View
+            style={[
+              styles.calendarSheetSwipeContent,
+              { transform: [{ translateX: sheetSwipeX }] },
+            ]}
+            {...sheetSwipeResponder.panHandlers}
           >
-            {transactionsForDay.length === 0 ? (
-              <EmptyLogState />
-            ) : (
-              transactionsForDay.map((tx) => (
-                <TransactionRow
-                  currencyCode={currencyCode}
-                  currencySymbol={currencySymbol}
-                  exchangeRates={exchangeRates}
-                  key={tx.id}
-                  onDelete={() => onDeleteTransaction(tx)}
-                  onPress={() => openTransaction(tx)}
-                  transaction={tx}
-                />
-              ))
-            )}
-          </ScrollView>
+            <View style={styles.calendarSheetHeader}>
+              <Text style={styles.calendarSheetTitle}>{format(date, "EEE, d MMM")}</Text>
+              <Text style={styles.calendarSheetNet}>
+                {netSign}{formatCents(Math.abs(netCents), currencySymbol)}
+              </Text>
+            </View>
+            <View style={styles.calendarSheetDivider} />
+
+            <ScrollView
+              contentContainerStyle={styles.calendarSheetListContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {transactionsForDay.length === 0 ? (
+                <EmptyLogState />
+              ) : (
+                transactionsForDay.map((tx) => (
+                  <TransactionRow
+                    currencyCode={currencyCode}
+                    currencySymbol={currencySymbol}
+                    exchangeRates={exchangeRates}
+                    key={tx.id}
+                    onDelete={() => onDeleteTransaction(tx)}
+                    onPress={() => openTransaction(tx)}
+                    transaction={tx}
+                  />
+                ))
+              )}
+            </ScrollView>
+          </Animated.View>
 
           <Pressable
             accessibilityLabel="Add entry for selected date"
@@ -2623,6 +2702,9 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     overflow: "hidden",
+  },
+  calendarSheetSwipeContent: {
+    flex: 1,
   },
   calendarSheetHeader: {
     alignItems: "center",
