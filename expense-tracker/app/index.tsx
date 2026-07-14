@@ -1763,6 +1763,16 @@ function CalendarDaySheet({
     animateClosed(onClose);
   }, [animateClosed, onClose]);
 
+  const openTransaction = useCallback(
+    (transaction: Transaction) => {
+      animateClosed(() => {
+        onClose();
+        onEditTransaction(transaction);
+      });
+    },
+    [animateClosed, onClose, onEditTransaction],
+  );
+
   useEffect(() => {
     if (visible) {
       setIsMounted(true);
@@ -1823,7 +1833,7 @@ function CalendarDaySheet({
                   exchangeRates={exchangeRates}
                   key={tx.id}
                   onDelete={() => onDeleteTransaction(tx)}
-                  onPress={() => onEditTransaction(tx)}
+                  onPress={() => openTransaction(tx)}
                   transaction={tx}
                 />
               ))
