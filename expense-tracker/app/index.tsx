@@ -878,6 +878,22 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
     const pct = Math.round(((netCents - lastMonthNetCents) / Math.abs(lastMonthNetCents)) * 100);
     return { pct, up: pct >= 0 };
   }, [netCents, lastMonthNetCents]);
+  const calendarSheetVisible = selectedCalendarDate !== null;
+  const toastNotificationMessage =
+    toastMessage && !pendingDeletion && recorded !== "deleted" && recorded !== "1" && recorded !== "saved"
+      ? toastMessage
+      : pendingDeletion || recorded === "deleted"
+        ? `Your ${pendingDeletion?.transaction.type ?? deletedType ?? "transaction"} has been deleted`
+        : recorded === "saved"
+          ? "Transaction saved"
+          : transactions[0]?.type === "income"
+            ? "Your income has been recorded"
+            : transactions[0]?.type === "transfer"
+              ? "Your transfer has been recorded"
+              : "Your expense has been recorded";
+  const toastNotificationVariant =
+    pendingDeletion || recorded === "deleted" ? "destructive" : "default";
+  const toastNotificationVisible = showToast || pendingDeletion !== null;
 
   return (
     <SafeAreaView edges={["top"]} style={styles.homeScreen}>
@@ -1085,27 +1101,19 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
           })
         }
         onSelectDate={setSelectedCalendarDate}
-        visible={selectedCalendarDate !== null}
+        toastMessage={toastNotificationMessage}
+        toastOnAction={pendingDeletion ? handleUndoDelete : undefined}
+        toastVariant={toastNotificationVariant}
+        toastVisible={toastNotificationVisible}
+        visible={calendarSheetVisible}
       />
 
       <ToastNotification
         bottomOffset={tabBarHeight + 8}
-        message={
-          toastMessage && !pendingDeletion && recorded !== "deleted" && recorded !== "1" && recorded !== "saved"
-            ? toastMessage
-            : pendingDeletion || recorded === "deleted"
-              ? `Your ${pendingDeletion?.transaction.type ?? deletedType ?? "transaction"} has been deleted`
-              : recorded === "saved"
-                ? "Transaction saved"
-                : transactions[0]?.type === "income"
-                  ? "Your income has been recorded"
-                  : transactions[0]?.type === "transfer"
-                    ? "Your transfer has been recorded"
-                    : "Your expense has been recorded"
-        }
+        message={toastNotificationMessage}
         onAction={pendingDeletion ? handleUndoDelete : undefined}
-        variant={pendingDeletion || recorded === "deleted" ? "destructive" : "default"}
-        visible={showToast || pendingDeletion !== null}
+        variant={toastNotificationVariant}
+        visible={toastNotificationVisible && !calendarSheetVisible}
       />
 
       <SearchOverlay
@@ -1766,6 +1774,10 @@ function CalendarDaySheet({
   onDeleteTransaction,
   onEditTransaction,
   onSelectDate,
+  toastMessage,
+  toastOnAction,
+  toastVariant,
+  toastVisible,
   visible,
 }: {
   currencyCode: string;
@@ -1778,6 +1790,10 @@ function CalendarDaySheet({
   onDeleteTransaction: (transaction: Transaction) => void;
   onEditTransaction: (transaction: Transaction) => void;
   onSelectDate: (date: Date) => void;
+  toastMessage: string;
+  toastOnAction?: () => void;
+  toastVariant: "default" | "destructive";
+  toastVisible: boolean;
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
@@ -1994,6 +2010,14 @@ function CalendarDaySheet({
               <Text style={styles.calendarSheetCloseText}>Close</Text>
             </Pressable>
           </View>
+
+          <ToastNotification
+            bottomOffset={insets.bottom + 92}
+            message={toastMessage}
+            onAction={toastOnAction}
+            variant={toastVariant}
+            visible={toastVisible}
+          />
         </Animated.View>
       </View>
     </Modal>
