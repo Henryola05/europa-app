@@ -795,13 +795,18 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
       .catch(() => {});
   }, [transactions, currency.code]);
 
-  const monthTransactions = useMemo(() =>
-    transactions.filter((tx) => {
+  const getMonthTransactions = useCallback(
+    (month: Date) => transactions.filter((tx) => {
       const d = new Date(tx.date);
-      return d.getFullYear() === selectedMonth.getFullYear() &&
-        d.getMonth() === selectedMonth.getMonth();
+      return d.getFullYear() === month.getFullYear() &&
+        d.getMonth() === month.getMonth();
     }),
-    [transactions, selectedMonth],
+    [transactions],
+  );
+
+  const monthTransactions = useMemo(
+    () => getMonthTransactions(selectedMonth),
+    [getMonthTransactions, selectedMonth],
   );
 
   const { incomeCents, expenseCents, netCents } = useMemo(() => {
@@ -982,11 +987,12 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
           showsVerticalScrollIndicator={false}
         >
-          <CalendarMonthGrid
+          <CalendarMonthPager
             currencyCode={currency.code}
             exchangeRates={exchangeRates}
-            monthTransactions={monthTransactions}
+            getMonthTransactions={getMonthTransactions}
             onSelectDate={setSelectedCalendarDate}
+            onSelectMonth={setSelectedMonth}
             selectedMonth={selectedMonth}
             weekStartIndex={weekStartIndex}
           />
@@ -1600,6 +1606,134 @@ function formatCalendarAmount(cents: number, symbol: string): string {
   if (abs >= 1_000_000_00) return `${symbol}${(abs / 1_000_000_00).toFixed(1)}M`;
   if (abs >= 1_000_00) return `${symbol}${(abs / 1_000_00).toFixed(1)}K`;
   return `${symbol}${(abs / 100).toFixed(0)}`;
+}
+
+function CalendarMonthPager({
+  currencyCode,
+  exchangeRates,
+  getMonthTransactions,
+  onSelectDate,
+  onSelectMonth,
+  selectedMonth,
+  weekStartIndex,
+}: {
+  currencyCode: string;
+  exchangeRates: Record<string, number>;
+  getMonthTransactions: (month: Date) => Transaction[];
+  onSelectDate: (date: Date) => void;
+  onSelectMonth: (month: Date) => void;
+  selectedMonth: Date;
+  weekStartIndex: number;
+}) {
+  const pagerWidth = Dimensions.get("window").width;
+  const monthSwipeX = useSharedValue(0);
+  const selectedMonthKey = `${selectedMonth.getFullYear()}-${selectedMonth.getMonth()}`;
+
+  const monthPanes = useMemo(() => {
+    const previousMonth = new Date(
+      selectedMonth.getFullYear(),
+      selectedMonth.getMonth() - 1,
+      1,
+    );
+    const currentMonth = new Date(
+      selectedMonth.getFullYear(),
+      selectedMonth.getMonth(),
+      1,
+    );
+    const nextMonth = new Date(
+      selectedMonth.getFullYear(),
+      selectedMonth.getMonth() + 1,
+      1,
+    );
+
+    return [previousMonth, currentMonth, nextMonth].map((month) => ({
+      key: `${month.getFullYear()}-${month.getMonth()}`,
+      month,
+      transactions: getMonthTransactions(month),
+    }));
+  }, [getMonthTransactions, selectedMonth]);
+
+  const shiftMonth = useCallback(
+    (months: number) => {
+      onSelectMonth(new Date(
+        selectedMonth.getFullYear(),
+        selectedMonth.getMonth() + months,
+        1,
+      ));
+    },
+    [onSelectMonth, selectedMonth],
+  );
+
+  const monthSwipeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-4, 4])
+        .failOffsetY([-24, 24])
+        .onBegin(() => {
+          cancelAnimation(monthSwipeX);
+        })
+        .onUpdate((event) => {
+          monthSwipeX.value = Math.max(-pagerWidth, Math.min(pagerWidth, event.translationX));
+        })
+        .onEnd((event) => {
+          const horizontalMove = Math.abs(event.translationX);
+          const horizontalVelocity = Math.abs(event.velocityX);
+          const shouldChangeMonth = horizontalMove > 44 || horizontalVelocity > 420;
+          if (!shouldChangeMonth) {
+            monthSwipeX.value = withSpring(0, { damping: 22, stiffness: 260 });
+            return;
+          }
+
+          const direction = event.translationX < 0 ? 1 : -1;
+          const exitX = direction === 1 ? -pagerWidth : pagerWidth;
+
+          monthSwipeX.value = withTiming(exitX, { duration: 110 }, (finished) => {
+            if (!finished) return;
+            runOnJS(shiftMonth)(direction);
+          });
+        })
+        .onFinalize((_event, success) => {
+          if (!success) {
+            monthSwipeX.value = withSpring(0, { damping: 22, stiffness: 260 });
+          }
+        }),
+    [monthSwipeX, pagerWidth, shiftMonth],
+  );
+
+  const monthSwipeStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: -pagerWidth + monthSwipeX.value }],
+  }));
+
+  useLayoutEffect(() => {
+    monthSwipeX.value = 0;
+  }, [monthSwipeX, selectedMonthKey]);
+
+  return (
+    <View style={styles.calendarMonthPager}>
+      <GestureDetector gesture={monthSwipeGesture}>
+        <Reanimated.View
+          style={[
+            styles.calendarMonthPagerTrack,
+            { width: pagerWidth * 3 },
+            monthSwipeStyle,
+          ]}
+        >
+          {monthPanes.map((pane) => (
+            <View key={pane.key} style={[styles.calendarMonthPane, { width: pagerWidth }]}>
+              <CalendarMonthGrid
+                currencyCode={currencyCode}
+                exchangeRates={exchangeRates}
+                monthTransactions={pane.transactions}
+                onSelectDate={onSelectDate}
+                selectedMonth={pane.month}
+                weekStartIndex={weekStartIndex}
+              />
+            </View>
+          ))}
+        </Reanimated.View>
+      </GestureDetector>
+    </View>
+  );
 }
 
 function CalendarMonthGrid({
@@ -2675,6 +2809,16 @@ const styles = StyleSheet.create({
     letterSpacing: -0.08,
     lineHeight: 20,
     textAlign: "center",
+  },
+  calendarMonthPager: {
+    overflow: "hidden",
+    width: "100%",
+  },
+  calendarMonthPagerTrack: {
+    flexDirection: "row",
+  },
+  calendarMonthPane: {
+    flex: 1,
   },
   calendarContainer: {
     flex: 1,
