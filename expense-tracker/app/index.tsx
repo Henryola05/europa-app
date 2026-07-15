@@ -835,26 +835,6 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
     return inc - exp;
   }, [transactions, selectedMonth, exchangeRates, currency.code]);
 
-  const dayGroups = useMemo<DayGroup[]>(() => {
-    const map = new Map<string, Transaction[]>();
-    for (const tx of monthTransactions) {
-      const key = localDateKey(tx.date);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(tx);
-    }
-    return Array.from(map.entries())
-      .map(([dateKey, txs]) => ({
-        dateKey,
-        date: localDateFromKey(dateKey),
-        transactions: txs,
-        netCents: txs.reduce((s, tx) => {
-          const cents = convertCents(tx.amountCents, tx.currencyCode, currency.code, exchangeRates);
-          return tx.type === "income" ? s + cents : tx.type === "expense" ? s - cents : s;
-        }, 0),
-      }))
-      .sort((a, b) => b.date.getTime() - a.date.getTime());
-  }, [monthTransactions, exchangeRates, currency.code]);
-
   const getCalendarDayGroup = useCallback((calendarDate: Date): DayGroup => {
     const dateKey = localDateKeyFromDate(calendarDate);
     const txs = transactions.filter((tx) => localDateKey(tx.date) === dateKey);
@@ -997,47 +977,24 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
             weekStartIndex={weekStartIndex}
           />
         </ScrollView>
-      ) : monthTransactions.length === 0 ? (
-        <ScrollView
-          contentContainerStyle={{ flexGrow: 1 }}
-          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
-          showsVerticalScrollIndicator={false}
-        >
-          <EmptyLogState />
-        </ScrollView>
       ) : (
-        <ScrollView
-          contentContainerStyle={styles.txListContent}
-          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
-          showsVerticalScrollIndicator={false}
-          style={styles.txList}
-        >
-          {dayGroups.map((group) => (
-            <View key={group.dateKey}>
-              <DateGroupHeader
-                currencySymbol={currencySymbol}
-                date={group.date}
-                netCents={group.netCents}
-              />
-              {group.transactions.map((tx) => (
-                <TransactionRow
-                  currencyCode={currency.code}
-                  currencySymbol={currencySymbol}
-                  exchangeRates={exchangeRates}
-                  key={tx.id}
-                  onPress={() =>
-                    router.push({
-                      pathname: "/add-entry",
-                      params: { transactionId: tx.id },
-                    })
-                  }
-                  onDelete={() => handleDeleteTransaction(tx)}
-                  transaction={tx}
-                />
-              ))}
-            </View>
-          ))}
-        </ScrollView>
+        <TransactionListMonthPager
+          currencyCode={currency.code}
+          currencySymbol={currencySymbol}
+          exchangeRates={exchangeRates}
+          getMonthTransactions={getMonthTransactions}
+          isRefreshing={isRefreshing}
+          onDeleteTransaction={handleDeleteTransaction}
+          onEditTransaction={(transaction) =>
+            router.push({
+              pathname: "/add-entry",
+              params: { transactionId: transaction.id },
+            })
+          }
+          onRefresh={handleRefresh}
+          onSelectMonth={setSelectedMonth}
+          selectedMonth={selectedMonth}
+        />
       )}
 
       <Pressable
@@ -1625,6 +1582,159 @@ function CalendarMonthPager({
   selectedMonth: Date;
   weekStartIndex: number;
 }) {
+  return (
+    <HomeMonthPager
+      onSelectMonth={onSelectMonth}
+      renderMonth={(month) => (
+        <CalendarMonthGrid
+          currencyCode={currencyCode}
+          exchangeRates={exchangeRates}
+          monthTransactions={getMonthTransactions(month)}
+          onSelectDate={onSelectDate}
+          selectedMonth={month}
+          weekStartIndex={weekStartIndex}
+        />
+      )}
+      selectedMonth={selectedMonth}
+    />
+  );
+}
+
+function TransactionListMonthPager({
+  currencyCode,
+  currencySymbol,
+  exchangeRates,
+  getMonthTransactions,
+  isRefreshing,
+  onDeleteTransaction,
+  onEditTransaction,
+  onRefresh,
+  onSelectMonth,
+  selectedMonth,
+}: {
+  currencyCode: string;
+  currencySymbol: string;
+  exchangeRates: Record<string, number>;
+  getMonthTransactions: (month: Date) => Transaction[];
+  isRefreshing: boolean;
+  onDeleteTransaction: (transaction: Transaction) => void;
+  onEditTransaction: (transaction: Transaction) => void;
+  onRefresh: () => void;
+  onSelectMonth: (month: Date) => void;
+  selectedMonth: Date;
+}) {
+  return (
+    <HomeMonthPager
+      onSelectMonth={onSelectMonth}
+      renderMonth={(month) => (
+        <TransactionListMonthPane
+          currencyCode={currencyCode}
+          currencySymbol={currencySymbol}
+          exchangeRates={exchangeRates}
+          isRefreshing={isRefreshing}
+          monthTransactions={getMonthTransactions(month)}
+          onDeleteTransaction={onDeleteTransaction}
+          onEditTransaction={onEditTransaction}
+          onRefresh={onRefresh}
+        />
+      )}
+      selectedMonth={selectedMonth}
+    />
+  );
+}
+
+function TransactionListMonthPane({
+  currencyCode,
+  currencySymbol,
+  exchangeRates,
+  isRefreshing,
+  monthTransactions,
+  onDeleteTransaction,
+  onEditTransaction,
+  onRefresh,
+}: {
+  currencyCode: string;
+  currencySymbol: string;
+  exchangeRates: Record<string, number>;
+  isRefreshing: boolean;
+  monthTransactions: Transaction[];
+  onDeleteTransaction: (transaction: Transaction) => void;
+  onEditTransaction: (transaction: Transaction) => void;
+  onRefresh: () => void;
+}) {
+  const dayGroups = useMemo<DayGroup[]>(() => {
+    const map = new Map<string, Transaction[]>();
+    for (const tx of monthTransactions) {
+      const key = localDateKey(tx.date);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(tx);
+    }
+
+    return Array.from(map.entries())
+      .map(([dateKey, txs]) => ({
+        dateKey,
+        date: localDateFromKey(dateKey),
+        transactions: txs,
+        netCents: txs.reduce((s, tx) => {
+          const cents = convertCents(tx.amountCents, tx.currencyCode, currencyCode, exchangeRates);
+          return tx.type === "income" ? s + cents : tx.type === "expense" ? s - cents : s;
+        }, 0),
+      }))
+      .sort((a, b) => b.date.getTime() - a.date.getTime());
+  }, [currencyCode, exchangeRates, monthTransactions]);
+
+  if (monthTransactions.length === 0) {
+    return (
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1 }}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
+        showsVerticalScrollIndicator={false}
+      >
+        <EmptyLogState />
+      </ScrollView>
+    );
+  }
+
+  return (
+    <ScrollView
+      contentContainerStyle={styles.txListContent}
+      refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
+      showsVerticalScrollIndicator={false}
+      style={styles.txList}
+    >
+      {dayGroups.map((group) => (
+        <View key={group.dateKey}>
+          <DateGroupHeader
+            currencySymbol={currencySymbol}
+            date={group.date}
+            netCents={group.netCents}
+          />
+          {group.transactions.map((tx) => (
+            <TransactionRow
+              currencyCode={currencyCode}
+              currencySymbol={currencySymbol}
+              exchangeRates={exchangeRates}
+              key={tx.id}
+              onDelete={() => onDeleteTransaction(tx)}
+              onPress={() => onEditTransaction(tx)}
+              transaction={tx}
+            />
+          ))}
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+function HomeMonthPager({
+  onSelectMonth,
+  renderMonth,
+  selectedMonth,
+}: {
+  onSelectMonth: (month: Date) => void;
+  renderMonth: (month: Date) => React.ReactNode;
+  selectedMonth: Date;
+}) {
   const pagerWidth = Dimensions.get("window").width;
   const monthSwipeX = useSharedValue(0);
   const selectedMonthKey = `${selectedMonth.getFullYear()}-${selectedMonth.getMonth()}`;
@@ -1649,9 +1759,8 @@ function CalendarMonthPager({
     return [previousMonth, currentMonth, nextMonth].map((month) => ({
       key: `${month.getFullYear()}-${month.getMonth()}`,
       month,
-      transactions: getMonthTransactions(month),
     }));
-  }, [getMonthTransactions, selectedMonth]);
+  }, [selectedMonth]);
 
   const shiftMonth = useCallback(
     (months: number) => {
@@ -1720,14 +1829,7 @@ function CalendarMonthPager({
         >
           {monthPanes.map((pane) => (
             <View key={pane.key} style={[styles.calendarMonthPane, { width: pagerWidth }]}>
-              <CalendarMonthGrid
-                currencyCode={currencyCode}
-                exchangeRates={exchangeRates}
-                monthTransactions={pane.transactions}
-                onSelectDate={onSelectDate}
-                selectedMonth={pane.month}
-                weekStartIndex={weekStartIndex}
-              />
+              {renderMonth(pane.month)}
             </View>
           ))}
         </Reanimated.View>
