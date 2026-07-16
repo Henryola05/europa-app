@@ -758,6 +758,8 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
 
   useFocusEffect(
     useCallback(() => {
+      loadTransactions();
+
       const deleted = useUIStore.getState().pendingDeletedTransaction;
       if (deleted) {
         useUIStore.getState().setPendingDeletedTransaction(null);
@@ -778,7 +780,7 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
       setShowToast(true);
       const t = setTimeout(() => setShowToast(false), 3000);
       return () => clearTimeout(t);
-    }, []),
+    }, [loadTransactions]),
   );
 
   useEffect(() => {
@@ -1049,10 +1051,9 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
         exchangeRates={exchangeRates}
         getDayGroup={getCalendarDayGroup}
         onAdd={(date) => {
-          setSelectedCalendarDate(null);
           router.push({
             pathname: "/add-entry",
-            params: { date: date.toISOString() },
+            params: { date: date.toISOString(), returnToDaySheet: "1" },
           });
         }}
         onClose={() => setSelectedCalendarDate(null)}

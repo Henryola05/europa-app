@@ -7,6 +7,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
   Dimensions,
   KeyboardAvoidingView,
@@ -3214,15 +3215,22 @@ function ImageUploadBottomSheet({
 
 export default function AddEntryScreen() {
   const router = useRouter();
-  const { transactionId: routeTransactionId, accountId: routeAccountId, date: routeDate } = useLocalSearchParams<{
+  const {
+    transactionId: routeTransactionId,
+    accountId: routeAccountId,
+    date: routeDate,
+    returnToDaySheet: routeReturnToDaySheet,
+  } = useLocalSearchParams<{
     transactionId?: string;
     accountId?: string;
     date?: string;
+    returnToDaySheet?: string;
   }>();
   const insets = useSafeAreaInsets();
   const { categoryColors } = useCategoriesStore();
   const transactionId =
     typeof routeTransactionId === "string" ? routeTransactionId : undefined;
+  const shouldReturnToDaySheet = routeReturnToDaySheet === "1";
   const initialDate =
     typeof routeDate === "string" && !Number.isNaN(new Date(routeDate).getTime())
       ? new Date(routeDate)
@@ -3387,7 +3395,10 @@ export default function AddEntryScreen() {
   const [isCreateAccountOpen, setIsCreateAccountOpen] = useState(false);
   const [isImageUploadOpen, setIsImageUploadOpen] = useState(false);
   const [transactionImages, setTransactionImages] = useState<SelectedImage[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const descriptionInputRef = useRef<TextInput>(null);
+  const isSavingRef = useRef(false);
   const shouldOpenDestinationAfterSourceRef = useRef(false);
   const shouldFocusTitleAfterDestinationRef = useRef(false);
   const shouldOpenAccountAfterCategoryRef = useRef(false);
@@ -3440,7 +3451,11 @@ export default function AddEntryScreen() {
   }, [transactionType]);
 
   async function handleRecord() {
-    if (!canRecord) return;
+    if (!canRecord || isSavingRef.current) return;
+
+    isSavingRef.current = true;
+    setIsSaving(true);
+    setSaveError(null);
 
     const transaction: RecordedTransaction = {
       id: transactionId ?? Math.random().toString(36).slice(2),
@@ -3474,8 +3489,27 @@ export default function AddEntryScreen() {
         JSON.stringify(nextTransactions),
       );
     } catch {
-      // silently continue — don't block navigation on storage failure
+      const message = "We couldn't save this transaction. Please try again.";
+      isSavingRef.current = false;
+      setIsSaving(false);
+      setSaveError(message);
+      Alert.alert("Save failed", message);
+      return;
     }
+    if (shouldReturnToDaySheet) {
+      useUIStore.getState().setPendingToast(
+        isEditing
+          ? "Transaction saved"
+          : transactionType === "income"
+            ? "Your income has been recorded"
+            : transactionType === "transfer"
+              ? "Your transfer has been recorded"
+              : "Your expense has been recorded",
+      );
+      router.back();
+      return;
+    }
+
     router.replace(isEditing ? "/?recorded=saved" : "/?recorded=1");
   }
 
@@ -3701,23 +3735,25 @@ export default function AddEntryScreen() {
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 4 }]}>
+        {saveError ? <Text style={styles.recordError}>{saveError}</Text> : null}
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: !canRecord }}
-          disabled={!canRecord}
+          accessibilityState={{ busy: isSaving, disabled: !canRecord || isSaving }}
+          disabled={!canRecord || isSaving}
           onPress={handleRecord}
           style={[
             styles.recordButton,
-            canRecord && styles.recordButtonEnabled,
+            canRecord && !isSaving && styles.recordButtonEnabled,
+            isSaving && styles.recordButtonSaving,
           ]}
         >
           <Text
             style={[
               styles.recordButtonText,
-              canRecord && styles.recordButtonTextEnabled,
+              canRecord && !isSaving && styles.recordButtonTextEnabled,
             ]}
           >
-            {recordLabel}
+            {isSaving ? "Saving..." : recordLabel}
           </Text>
         </Pressable>
       </View>
@@ -4211,6 +4247,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 16,
   },
+  recordError: {
+    color: figmaColors.error["600"],
+    fontFamily: fontFamily.medium,
+    fontSize: 14,
+    marginBottom: 8,
+  },
   recordButton: {
     alignItems: "center",
     backgroundColor: figmaColors.grayNeutral["100"],
@@ -4229,6 +4271,9 @@ const styles = StyleSheet.create({
     },
     shadowOpacity: 0.05,
     shadowRadius: 2,
+  },
+  recordButtonSaving: {
+    opacity: 0.85,
   },
   recordButtonText: {
     color: figmaColors.grayNeutral["300"],
