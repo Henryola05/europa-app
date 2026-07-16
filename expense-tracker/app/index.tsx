@@ -646,6 +646,7 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
   }>();
   const [isCalendarView, setIsCalendarView] = useState(false);
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date | null>(null);
+  const [isEntryScreenOpen, setIsEntryScreenOpen] = useState(false);
   const [isMonthYearPickerOpen, setIsMonthYearPickerOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => new Date());
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -759,6 +760,7 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
   useFocusEffect(
     useCallback(() => {
       loadTransactions();
+      setIsEntryScreenOpen(false);
 
       const deleted = useUIStore.getState().pendingDeletedTransaction;
       if (deleted) {
@@ -865,7 +867,7 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
     const pct = Math.round(((netCents - lastMonthNetCents) / Math.abs(lastMonthNetCents)) * 100);
     return { pct, up: pct >= 0 };
   }, [netCents, lastMonthNetCents]);
-  const calendarSheetVisible = selectedCalendarDate !== null;
+  const calendarSheetVisible = selectedCalendarDate !== null && !isEntryScreenOpen;
   const toastNotificationMessage =
     toastMessage && !pendingDeletion && recorded !== "deleted" && recorded !== "1" && recorded !== "saved"
       ? toastMessage
@@ -1051,6 +1053,7 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
         exchangeRates={exchangeRates}
         getDayGroup={getCalendarDayGroup}
         onAdd={(date) => {
+          setIsEntryScreenOpen(true);
           router.push({
             pathname: "/add-entry",
             params: { date: date.toISOString(), returnToDaySheet: "1" },
@@ -2249,7 +2252,7 @@ function CalendarDaySheet({
           </View>
 
           <ToastNotification
-            bottomOffset={insets.bottom + 92}
+            bottomOffset={insets.bottom + 24}
             message={toastMessage}
             onAction={toastOnAction}
             variant={toastVariant}
