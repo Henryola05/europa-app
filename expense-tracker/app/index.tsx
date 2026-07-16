@@ -2913,10 +2913,12 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   calendarMonthPager: {
+    flex: 1,
     overflow: "hidden",
     width: "100%",
   },
   calendarMonthPagerTrack: {
+    flex: 1,
     flexDirection: "row",
   },
   calendarMonthPane: {
