@@ -1061,12 +1061,13 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
         }}
         onClose={() => setSelectedCalendarDate(null)}
         onDeleteTransaction={handleDeleteTransaction}
-        onEditTransaction={(transaction) =>
+        onEditTransaction={(transaction) => {
+          setIsEntryScreenOpen(true);
           router.push({
             pathname: "/add-entry",
-            params: { transactionId: transaction.id },
+            params: { transactionId: transaction.id, returnToDaySheet: "1" },
           })
-        }
+        }}
         onSelectDate={setSelectedCalendarDate}
         toastMessage={toastNotificationMessage}
         toastOnAction={pendingDeletion ? handleUndoDelete : undefined}
@@ -2139,11 +2140,10 @@ function CalendarDaySheet({
   const openTransaction = useCallback(
     (transaction: Transaction) => {
       animateClosed(() => {
-        onClose();
         onEditTransaction(transaction);
       });
     },
-    [animateClosed, onClose, onEditTransaction],
+    [animateClosed, onEditTransaction],
   );
 
   useEffect(() => {
