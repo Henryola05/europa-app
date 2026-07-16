@@ -3531,6 +3531,10 @@ export default function AddEntryScreen() {
           transaction,
         });
       }
+      if (shouldReturnToDaySheet) {
+        router.back();
+        return;
+      }
     } catch {
       // Keep navigation reliable even if local persistence fails.
     }
