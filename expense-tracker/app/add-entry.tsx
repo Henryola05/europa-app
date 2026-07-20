@@ -7,8 +7,10 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
   Dimensions,
+  Easing,
   KeyboardAvoidingView,
   Modal,
   PanResponder,
@@ -32,6 +34,7 @@ import { COLOR_PALETTE } from "@/constants/categories";
 import { fontFamily } from "@/constants/typography";
 import { useCategoriesStore } from "@/stores/categories";
 import { accountGroupOrder, useAccountsStore, type AccountGroup as StoreAccountGroup } from "@/stores/accounts";
+import { useUIStore } from "@/stores/ui";
 import {
   currencies,
   currencySymbols,
@@ -752,6 +755,26 @@ function NewCategorySheet({
     }
   }, [backdropOpacity, translateY, visible]);
 
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isEmojiPickerOpen ? 0 : 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentScale, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isEmojiPickerOpen ? 0.96 : 1,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentScale, isEmojiPickerOpen]);
+
   const handleSave = useCallback(() => {
     const trimmedName = name.trim();
     if (!trimmedName) return;
@@ -769,6 +792,10 @@ function NewCategorySheet({
       transparent
       visible={visible}
     >
+      <Animated.View
+        pointerEvents={isEmojiPickerOpen ? "none" : "auto"}
+        style={{ flex: 1, opacity: contentOpacity, transform: [{ scale: contentScale }] }}
+      >
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.categorySheetRoot}
@@ -896,6 +923,7 @@ function NewCategorySheet({
           </Animated.View>
         </View>
       </KeyboardAvoidingView>
+      </Animated.View>
       <EmojiPickerSheet
         visible={isEmojiPickerOpen}
         onSelect={(e) => {
@@ -1063,9 +1091,36 @@ export function CreateAccountBottomSheet({
     }
   }, [balanceCents, canSubmit, description, name, onSubmit, selectedGroup]);
 
+  const isChildSheetOpen = isGroupPickerOpen || isBalanceSheetOpen;
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isChildSheetOpen ? 0 : 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentScale, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isChildSheetOpen ? 0.96 : 1,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentScale, isChildSheetOpen]);
+
   return (
     <Modal animationType="none" onRequestClose={closeSheet} transparent visible={visible}>
-      <View style={styles.categorySheetRoot}>
+      <Animated.View
+        pointerEvents={isChildSheetOpen ? "none" : "auto"}
+        style={[
+          styles.categorySheetRoot,
+          { opacity: contentOpacity, transform: [{ scale: contentScale }] },
+        ]}
+      >
         <Animated.View style={[styles.categorySheetBackdrop, { opacity: backdropOpacity }]}>
           <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
         </Animated.View>
@@ -1221,7 +1276,7 @@ export function CreateAccountBottomSheet({
             </Animated.View>
           </KeyboardAvoidingView>
         </View>
-      </View>
+      </Animated.View>
 
       <GroupPickerSheet
         onClose={() => setIsGroupPickerOpen(false)}
@@ -1405,6 +1460,15 @@ function AccountsBottomSheet({
     });
   }, [backdropOpacity, onClose, translateY]);
 
+  const handleEditBalance = useCallback((accountId: string) => {
+    Animated.parallel([
+      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) onEditBalance(accountId);
+    });
+  }, [backdropOpacity, onEditBalance, translateY]);
+
   useEffect(() => {
     if (visible) {
       translateY.setValue(500);
@@ -1585,7 +1649,7 @@ function AccountsBottomSheet({
                       onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
                       onDragMove={(dy) => handleDragMove(groupData.group, dy)}
                       onDragStart={(y0) => handleDragStart(groupData.group, index, y0)}
-                      onEditBalance={() => onEditBalance(account.id)}
+                      onEditBalance={() => handleEditBalance(account.id)}
                       onPress={() => { onSelectAccount(account); closeSheet(); }}
                       shift={getShift(groupData.group, index)}
                     />
@@ -2478,6 +2542,27 @@ function CategoryPickerSheet({
     });
   }, [reorderCategories, type]);
 
+  const isChildSheetOpen = isNewCategoryOpen || editingCategory !== null;
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isChildSheetOpen ? 0 : 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentScale, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isChildSheetOpen ? 0.96 : 1,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentScale, isChildSheetOpen]);
+
   return (
     <Modal
       animationType="none"
@@ -2485,7 +2570,13 @@ function CategoryPickerSheet({
       transparent
       visible={visible}
     >
-      <View style={styles.categorySheetRoot}>
+      <Animated.View
+        pointerEvents={isChildSheetOpen ? "none" : "auto"}
+        style={[
+          styles.categorySheetRoot,
+          { opacity: contentOpacity, transform: [{ scale: contentScale }] },
+        ]}
+      >
         <Animated.View
           style={[styles.categorySheetBackdrop, { opacity: backdropOpacity }]}
         >
@@ -2621,7 +2712,7 @@ function CategoryPickerSheet({
             </ScrollView>
           </Animated.View>
         </View>
-      </View>
+      </Animated.View>
 
       <NewCategorySheet
         initialColor={editingCategory?.color}
@@ -2634,7 +2725,7 @@ function CategoryPickerSheet({
         onDelete={editingCategory ? handleDeleteEditingCategory : undefined}
         onSave={editingCategory ? handleUpdateCategory : handleAddCategory}
         type={type}
-        visible={isNewCategoryOpen || editingCategory !== null}
+        visible={isChildSheetOpen}
       />
     </Modal>
   );
@@ -2819,6 +2910,26 @@ function AmountInputSheet({
     });
   }, [backdropOpacity, onClose, onDismiss, translateY]);
 
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isCurrencyPickerOpen ? 0 : 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentScale, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isCurrencyPickerOpen ? 0.96 : 1,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentScale, isCurrencyPickerOpen]);
+
   const handleKeyPress = (key: KeypadKey) => {
     if (key.type === "empty") {
       return;
@@ -2876,7 +2987,13 @@ function AmountInputSheet({
       transparent
       visible={visible}
     >
-      <View style={styles.amountSheetBackdrop}>
+      <Animated.View
+        pointerEvents={isCurrencyPickerOpen ? "none" : "auto"}
+        style={[
+          styles.amountSheetBackdrop,
+          { opacity: contentOpacity, transform: [{ scale: contentScale }] },
+        ]}
+      >
         <Animated.View
           pointerEvents="box-none"
           style={[styles.amountSheetOverlay, { opacity: backdropOpacity }]}
@@ -2975,7 +3092,7 @@ function AmountInputSheet({
             ))}
           </View>
         </Animated.View>
-      </View>
+      </Animated.View>
 
       <CurrencyPicker
         onClose={() => setIsCurrencyPickerOpen(false)}
@@ -3213,14 +3330,26 @@ function ImageUploadBottomSheet({
 
 export default function AddEntryScreen() {
   const router = useRouter();
-  const { transactionId: routeTransactionId, accountId: routeAccountId } = useLocalSearchParams<{
+  const {
+    transactionId: routeTransactionId,
+    accountId: routeAccountId,
+    date: routeDate,
+    returnToDaySheet: routeReturnToDaySheet,
+  } = useLocalSearchParams<{
     transactionId?: string;
     accountId?: string;
+    date?: string;
+    returnToDaySheet?: string;
   }>();
   const insets = useSafeAreaInsets();
   const { categoryColors } = useCategoriesStore();
   const transactionId =
     typeof routeTransactionId === "string" ? routeTransactionId : undefined;
+  const shouldReturnToDaySheet = routeReturnToDaySheet === "1";
+  const initialDate =
+    typeof routeDate === "string" && !Number.isNaN(new Date(routeDate).getTime())
+      ? new Date(routeDate)
+      : new Date();
   const isEditing = transactionId !== undefined;
   const editInitializedRef = useRef(false);
   const [transactionType, setTransactionType] =
@@ -3231,7 +3360,7 @@ export default function AddEntryScreen() {
   const [selectedCurrency, setSelectedCurrency] = useState<Currency>(
     currencies.find((c) => c.code === "USD") ?? currencies[0],
   );
-  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState(() => initialDate);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [recurringOption, setRecurringOption] = useState("Never");
   const [isRecurringSheetOpen, setIsRecurringSheetOpen] = useState(false);
@@ -3349,6 +3478,7 @@ export default function AddEntryScreen() {
     if (!account) return;
     setEditBalanceAccountId(accountId);
     setEditBalanceCents(account.balanceCents);
+    setIsAccountsEditOpen(false);
     setIsEditBalanceOpen(true);
   }
 
@@ -3370,6 +3500,7 @@ export default function AddEntryScreen() {
     setOpeningBalance(editBalanceAccountId, newBalanceCents - net);
     setIsEditBalanceOpen(false);
     setEditBalanceAccountId(null);
+    setTimeout(() => setIsAccountsEditOpen(true), 50);
   }
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [isAccountPickerOpen, setIsAccountPickerOpen] = useState(false);
@@ -3381,7 +3512,10 @@ export default function AddEntryScreen() {
   const [isCreateAccountOpen, setIsCreateAccountOpen] = useState(false);
   const [isImageUploadOpen, setIsImageUploadOpen] = useState(false);
   const [transactionImages, setTransactionImages] = useState<SelectedImage[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const descriptionInputRef = useRef<TextInput>(null);
+  const isSavingRef = useRef(false);
   const shouldOpenDestinationAfterSourceRef = useRef(false);
   const shouldFocusTitleAfterDestinationRef = useRef(false);
   const shouldOpenAccountAfterCategoryRef = useRef(false);
@@ -3434,7 +3568,11 @@ export default function AddEntryScreen() {
   }, [transactionType]);
 
   async function handleRecord() {
-    if (!canRecord) return;
+    if (!canRecord || isSavingRef.current) return;
+
+    isSavingRef.current = true;
+    setIsSaving(true);
+    setSaveError(null);
 
     const transaction: RecordedTransaction = {
       id: transactionId ?? Math.random().toString(36).slice(2),
@@ -3468,8 +3606,27 @@ export default function AddEntryScreen() {
         JSON.stringify(nextTransactions),
       );
     } catch {
-      // silently continue — don't block navigation on storage failure
+      const message = "We couldn't save this transaction. Please try again.";
+      isSavingRef.current = false;
+      setIsSaving(false);
+      setSaveError(message);
+      Alert.alert("Save failed", message);
+      return;
     }
+    if (shouldReturnToDaySheet) {
+      useUIStore.getState().setPendingToast(
+        isEditing
+          ? "Transaction saved"
+          : transactionType === "income"
+            ? "Your income has been recorded"
+            : transactionType === "transfer"
+              ? "Your transfer has been recorded"
+              : "Your expense has been recorded",
+      );
+      router.back();
+      return;
+    }
+
     router.replace(isEditing ? "/?recorded=saved" : "/?recorded=1");
   }
 
@@ -3479,10 +3636,22 @@ export default function AddEntryScreen() {
     try {
       const existing = await AsyncStorage.getItem(TRANSACTIONS_KEY);
       const list = existing ? (JSON.parse(existing) as RecordedTransaction[]) : [];
+      const originalIndex = list.findIndex((stored) => stored.id === transactionId);
+      const transaction = originalIndex >= 0 ? list[originalIndex] : null;
       await AsyncStorage.setItem(
         TRANSACTIONS_KEY,
         JSON.stringify(list.filter((stored) => stored.id !== transactionId)),
       );
+      if (transaction) {
+        useUIStore.getState().setPendingDeletedTransaction({
+          originalIndex,
+          transaction,
+        });
+      }
+      if (shouldReturnToDaySheet) {
+        router.back();
+        return;
+      }
     } catch {
       // Keep navigation reliable even if local persistence fails.
     }
@@ -3687,23 +3856,25 @@ export default function AddEntryScreen() {
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 4 }]}>
+        {saveError ? <Text style={styles.recordError}>{saveError}</Text> : null}
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: !canRecord }}
-          disabled={!canRecord}
+          accessibilityState={{ busy: isSaving, disabled: !canRecord || isSaving }}
+          disabled={!canRecord || isSaving}
           onPress={handleRecord}
           style={[
             styles.recordButton,
-            canRecord && styles.recordButtonEnabled,
+            canRecord && !isSaving && styles.recordButtonEnabled,
+            isSaving && styles.recordButtonSaving,
           ]}
         >
           <Text
             style={[
               styles.recordButtonText,
-              canRecord && styles.recordButtonTextEnabled,
+              canRecord && !isSaving && styles.recordButtonTextEnabled,
             ]}
           >
-            {recordLabel}
+            {isSaving ? "Saving..." : recordLabel}
           </Text>
         </Pressable>
       </View>
@@ -4197,6 +4368,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 16,
   },
+  recordError: {
+    color: figmaColors.error["600"],
+    fontFamily: fontFamily.medium,
+    fontSize: 14,
+    marginBottom: 8,
+  },
   recordButton: {
     alignItems: "center",
     backgroundColor: figmaColors.grayNeutral["100"],
@@ -4215,6 +4392,9 @@ const styles = StyleSheet.create({
     },
     shadowOpacity: 0.05,
     shadowRadius: 2,
+  },
+  recordButtonSaving: {
+    opacity: 0.85,
   },
   recordButtonText: {
     color: figmaColors.grayNeutral["300"],

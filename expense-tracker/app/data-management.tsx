@@ -3,6 +3,7 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
+  Easing,
   Modal,
   Pressable,
   Share,
@@ -129,8 +130,35 @@ export default function DataManagementScreen() {
     // placeholder — requires document picker
   }, []);
 
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isEraseSheetOpen ? 0 : 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentScale, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isEraseSheetOpen ? 0.96 : 1,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentScale, isEraseSheetOpen]);
+
   return (
     <View style={styles.root}>
+      <Animated.View
+        pointerEvents={isEraseSheetOpen ? "none" : "auto"}
+        style={[
+          styles.root,
+          { opacity: contentOpacity, transform: [{ scale: contentScale }] },
+        ]}
+      >
       <Animated.View
         pointerEvents="box-none"
         style={[styles.overlay, { opacity: backdropOpacity }]}
@@ -221,6 +249,7 @@ export default function DataManagementScreen() {
             </Svg>
           </Pressable>
         </View>
+      </Animated.View>
       </Animated.View>
 
       {/* Erase confirmation sheet */}

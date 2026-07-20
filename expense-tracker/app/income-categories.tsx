@@ -2,6 +2,7 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
+  Easing,
   KeyboardAvoidingView,
   Modal,
   PanResponder,
@@ -291,6 +292,26 @@ function NewCategorySheet({
     }
   }, [backdropOpacity, translateY, visible]);
 
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isEmojiPickerOpen ? 0 : 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentScale, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isEmojiPickerOpen ? 0.96 : 1,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentScale, isEmojiPickerOpen]);
+
   const handleSave = useCallback(() => {
     const trimmedName = name.trim();
     if (!trimmedName) return;
@@ -300,6 +321,10 @@ function NewCategorySheet({
 
   return (
     <Modal animationType="none" onRequestClose={closeSheet} transparent visible={visible}>
+      <Animated.View
+        pointerEvents={isEmojiPickerOpen ? "none" : "auto"}
+        style={{ flex: 1, opacity: contentOpacity, transform: [{ scale: contentScale }] }}
+      >
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.categorySheetRoot}
@@ -414,6 +439,7 @@ function NewCategorySheet({
           </Animated.View>
         </View>
       </KeyboardAvoidingView>
+      </Animated.View>
       <EmojiPickerSheet
         visible={isEmojiPickerOpen}
         onSelect={(e) => {
@@ -549,8 +575,36 @@ export default function IncomeCategoriesScreen() {
     });
   }, [reorderCategories]);
 
+  const isChildSheetOpen = isNewCategoryOpen || editingCategory !== null;
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isChildSheetOpen ? 0 : 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentScale, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isChildSheetOpen ? 0.96 : 1,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentScale, isChildSheetOpen]);
+
   return (
     <View style={styles.root}>
+      <Animated.View
+        pointerEvents={isChildSheetOpen ? "none" : "auto"}
+        style={[
+          styles.root,
+          { opacity: contentOpacity, transform: [{ scale: contentScale }] },
+        ]}
+      >
       {/* Backdrop */}
       <Animated.View
         pointerEvents="box-none"
@@ -628,6 +682,7 @@ export default function IncomeCategoriesScreen() {
           })}
         </ScrollView>
       </Animated.View>
+      </Animated.View>
 
       {/* Add / Edit sheet */}
       <NewCategorySheet
@@ -640,7 +695,7 @@ export default function IncomeCategoriesScreen() {
         }}
         onDelete={editingCategory ? handleDeleteEditingCategory : undefined}
         onSave={editingCategory ? handleUpdateCategory : handleAddCategory}
-        visible={isNewCategoryOpen || editingCategory !== null}
+        visible={isChildSheetOpen}
       />
     </View>
   );

@@ -6,12 +6,14 @@ import { StatusBar } from "expo-status-bar";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import {
   Animated,
+  Dimensions,
   Image,
   Modal,
   PanResponder,
@@ -29,6 +31,7 @@ import {
 } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Reanimated, {
+  cancelAnimation,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
@@ -313,6 +316,13 @@ function localDateKey(isoString: string): string {
 function localDateFromKey(key: string): Date {
   const [y, m, d] = key.split("-").map(Number);
   return new Date(y, m - 1, d);
+}
+
+function localDateKeyFromDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function getCalendarDays(year: number, month: number, weekStartIndex = 1) {
@@ -635,6 +645,8 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
     recorded?: string;
   }>();
   const [isCalendarView, setIsCalendarView] = useState(false);
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date | null>(null);
+  const [isEntryScreenOpen, setIsEntryScreenOpen] = useState(false);
   const [isMonthYearPickerOpen, setIsMonthYearPickerOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => new Date());
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -701,10 +713,28 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
   const handleUndoDelete = useCallback(async () => {
     if (!pendingDeletion) return;
 
+    let currentTransactions = transactions;
+    try {
+      const stored = await AsyncStorage.getItem(TRANSACTIONS_KEY);
+      currentTransactions = stored ? (JSON.parse(stored) as Transaction[]) : transactions;
+    } catch {
+      currentTransactions = transactions;
+    }
+
+    if (currentTransactions.some((tx) => tx.id === pendingDeletion.transaction.id)) {
+      setPendingDeletion(null);
+      setTransactions(currentTransactions);
+      return;
+    }
+
+    const restoreIndex = Math.max(
+      0,
+      Math.min(pendingDeletion.originalIndex, currentTransactions.length),
+    );
     const restoredTransactions = [
-      ...transactions.slice(0, pendingDeletion.originalIndex),
+      ...currentTransactions.slice(0, restoreIndex),
       pendingDeletion.transaction,
-      ...transactions.slice(pendingDeletion.originalIndex),
+      ...currentTransactions.slice(restoreIndex),
     ];
     setTransactions(restoredTransactions);
     setPendingDeletion(null);
@@ -729,6 +759,22 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
 
   useFocusEffect(
     useCallback(() => {
+      loadTransactions();
+      setIsEntryScreenOpen(false);
+
+      const deleted = useUIStore.getState().pendingDeletedTransaction;
+      if (deleted) {
+        useUIStore.getState().setPendingDeletedTransaction(null);
+        setPendingDeletion({
+          dateSection: deleted.transaction.date.slice(0, 10),
+          id: Date.now(),
+          originalIndex: deleted.originalIndex,
+          transaction: deleted.transaction as Transaction,
+        });
+        setShowToast(true);
+        return;
+      }
+
       const msg = useUIStore.getState().pendingToast;
       if (!msg) return;
       useUIStore.getState().setPendingToast(null);
@@ -736,7 +782,7 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
       setShowToast(true);
       const t = setTimeout(() => setShowToast(false), 3000);
       return () => clearTimeout(t);
-    }, []),
+    }, [loadTransactions]),
   );
 
   useEffect(() => {
@@ -753,13 +799,18 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
       .catch(() => {});
   }, [transactions, currency.code]);
 
-  const monthTransactions = useMemo(() =>
-    transactions.filter((tx) => {
+  const getMonthTransactions = useCallback(
+    (month: Date) => transactions.filter((tx) => {
       const d = new Date(tx.date);
-      return d.getFullYear() === selectedMonth.getFullYear() &&
-        d.getMonth() === selectedMonth.getMonth();
+      return d.getFullYear() === month.getFullYear() &&
+        d.getMonth() === month.getMonth();
     }),
-    [transactions, selectedMonth],
+    [transactions],
+  );
+
+  const monthTransactions = useMemo(
+    () => getMonthTransactions(selectedMonth),
+    [getMonthTransactions, selectedMonth],
   );
 
   const { incomeCents, expenseCents, netCents } = useMemo(() => {
@@ -788,25 +839,24 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
     return inc - exp;
   }, [transactions, selectedMonth, exchangeRates, currency.code]);
 
-  const dayGroups = useMemo<DayGroup[]>(() => {
-    const map = new Map<string, Transaction[]>();
-    for (const tx of monthTransactions) {
-      const key = localDateKey(tx.date);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(tx);
-    }
-    return Array.from(map.entries())
-      .map(([dateKey, txs]) => ({
-        dateKey,
-        date: localDateFromKey(dateKey),
-        transactions: txs,
-        netCents: txs.reduce((s, tx) => {
-          const cents = convertCents(tx.amountCents, tx.currencyCode, currency.code, exchangeRates);
-          return tx.type === "income" ? s + cents : tx.type === "expense" ? s - cents : s;
-        }, 0),
-      }))
-      .sort((a, b) => b.date.getTime() - a.date.getTime());
-  }, [monthTransactions, exchangeRates, currency.code]);
+  const getCalendarDayGroup = useCallback((calendarDate: Date): DayGroup => {
+    const dateKey = localDateKeyFromDate(calendarDate);
+    const txs = transactions.filter((tx) => localDateKey(tx.date) === dateKey);
+    return {
+      date: localDateFromKey(dateKey),
+      dateKey,
+      netCents: txs.reduce((sum, tx) => {
+        const cents = convertCents(tx.amountCents, tx.currencyCode, currency.code, exchangeRates);
+        return tx.type === "income" ? sum + cents : tx.type === "expense" ? sum - cents : sum;
+      }, 0),
+      transactions: txs,
+    };
+  }, [currency.code, exchangeRates, transactions]);
+
+  const selectedCalendarDayGroup = useMemo<DayGroup | null>(() => {
+    if (!selectedCalendarDate) return null;
+    return getCalendarDayGroup(selectedCalendarDate);
+  }, [getCalendarDayGroup, selectedCalendarDate]);
 
   const netAbsCents = Math.abs(netCents);
   const netWhole = `${netCents < 0 ? "−" : ""}${currencySymbol}${Math.floor(netAbsCents / 100).toLocaleString()}.`;
@@ -817,6 +867,22 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
     const pct = Math.round(((netCents - lastMonthNetCents) / Math.abs(lastMonthNetCents)) * 100);
     return { pct, up: pct >= 0 };
   }, [netCents, lastMonthNetCents]);
+  const calendarSheetVisible = selectedCalendarDate !== null && !isEntryScreenOpen;
+  const toastNotificationMessage =
+    toastMessage && !pendingDeletion && recorded !== "deleted" && recorded !== "1" && recorded !== "saved"
+      ? toastMessage
+      : pendingDeletion || recorded === "deleted"
+        ? `Your ${pendingDeletion?.transaction.type ?? deletedType ?? "transaction"} has been deleted`
+        : recorded === "saved"
+          ? "Transaction saved"
+          : transactions[0]?.type === "income"
+            ? "Your income has been recorded"
+            : transactions[0]?.type === "transfer"
+              ? "Your transfer has been recorded"
+              : "Your expense has been recorded";
+  const toastNotificationVariant =
+    pendingDeletion || recorded === "deleted" ? "destructive" : "default";
+  const toastNotificationVisible = showToast || pendingDeletion !== null;
 
   return (
     <SafeAreaView edges={["top"]} style={styles.homeScreen}>
@@ -905,55 +971,34 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
           showsVerticalScrollIndicator={false}
         >
-          <CalendarMonthGrid
+          <CalendarMonthPager
             currencyCode={currency.code}
             exchangeRates={exchangeRates}
-            monthTransactions={monthTransactions}
+            getMonthTransactions={getMonthTransactions}
+            onSelectDate={setSelectedCalendarDate}
+            onSelectMonth={setSelectedMonth}
             selectedMonth={selectedMonth}
             weekStartIndex={weekStartIndex}
           />
         </ScrollView>
-      ) : monthTransactions.length === 0 ? (
-        <ScrollView
-          contentContainerStyle={{ flexGrow: 1 }}
-          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
-          showsVerticalScrollIndicator={false}
-        >
-          <EmptyLogState />
-        </ScrollView>
       ) : (
-        <ScrollView
-          contentContainerStyle={styles.txListContent}
-          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
-          showsVerticalScrollIndicator={false}
-          style={styles.txList}
-        >
-          {dayGroups.map((group) => (
-            <View key={group.dateKey}>
-              <DateGroupHeader
-                currencySymbol={currencySymbol}
-                date={group.date}
-                netCents={group.netCents}
-              />
-              {group.transactions.map((tx) => (
-                <TransactionRow
-                  currencyCode={currency.code}
-                  currencySymbol={currencySymbol}
-                  exchangeRates={exchangeRates}
-                  key={tx.id}
-                  onPress={() =>
-                    router.push({
-                      pathname: "/add-entry",
-                      params: { transactionId: tx.id },
-                    })
-                  }
-                  onDelete={() => handleDeleteTransaction(tx)}
-                  transaction={tx}
-                />
-              ))}
-            </View>
-          ))}
-        </ScrollView>
+        <TransactionListMonthPager
+          currencyCode={currency.code}
+          currencySymbol={currencySymbol}
+          exchangeRates={exchangeRates}
+          getMonthTransactions={getMonthTransactions}
+          isRefreshing={isRefreshing}
+          onDeleteTransaction={handleDeleteTransaction}
+          onEditTransaction={(transaction) =>
+            router.push({
+              pathname: "/add-entry",
+              params: { transactionId: transaction.id },
+            })
+          }
+          onRefresh={handleRefresh}
+          onSelectMonth={setSelectedMonth}
+          selectedMonth={selectedMonth}
+        />
       )}
 
       <Pressable
@@ -1001,24 +1046,42 @@ function HomeEmptyListScreen({ currency, weekStartIndex }: { currency: Currency;
         visible={isMonthYearPickerOpen}
       />
 
+      <CalendarDaySheet
+        currencyCode={currency.code}
+        currencySymbol={currencySymbol}
+        dayGroup={selectedCalendarDayGroup}
+        exchangeRates={exchangeRates}
+        getDayGroup={getCalendarDayGroup}
+        onAdd={(date) => {
+          setIsEntryScreenOpen(true);
+          router.push({
+            pathname: "/add-entry",
+            params: { date: date.toISOString(), returnToDaySheet: "1" },
+          });
+        }}
+        onClose={() => setSelectedCalendarDate(null)}
+        onDeleteTransaction={handleDeleteTransaction}
+        onEditTransaction={(transaction) => {
+          setIsEntryScreenOpen(true);
+          router.push({
+            pathname: "/add-entry",
+            params: { transactionId: transaction.id, returnToDaySheet: "1" },
+          })
+        }}
+        onSelectDate={setSelectedCalendarDate}
+        toastMessage={toastNotificationMessage}
+        toastOnAction={pendingDeletion ? handleUndoDelete : undefined}
+        toastVariant={toastNotificationVariant}
+        toastVisible={toastNotificationVisible}
+        visible={calendarSheetVisible}
+      />
+
       <ToastNotification
         bottomOffset={tabBarHeight + 8}
-        message={
-          toastMessage && !pendingDeletion && recorded !== "deleted" && recorded !== "1" && recorded !== "saved"
-            ? toastMessage
-            : pendingDeletion || recorded === "deleted"
-              ? `Your ${pendingDeletion?.transaction.type ?? deletedType ?? "transaction"} has been deleted`
-              : recorded === "saved"
-                ? "Transaction saved"
-                : transactions[0]?.type === "income"
-                  ? "Your income has been recorded"
-                  : transactions[0]?.type === "transfer"
-                    ? "Your transfer has been recorded"
-                    : "Your expense has been recorded"
-        }
+        message={toastNotificationMessage}
         onAction={pendingDeletion ? handleUndoDelete : undefined}
-        variant={pendingDeletion || recorded === "deleted" ? "destructive" : "default"}
-        visible={showToast || pendingDeletion !== null}
+        variant={toastNotificationVariant}
+        visible={toastNotificationVisible && !calendarSheetVisible}
       />
 
       <SearchOverlay
@@ -1507,16 +1570,291 @@ function formatCalendarAmount(cents: number, symbol: string): string {
   return `${symbol}${(abs / 100).toFixed(0)}`;
 }
 
+function CalendarMonthPager({
+  currencyCode,
+  exchangeRates,
+  getMonthTransactions,
+  onSelectDate,
+  onSelectMonth,
+  selectedMonth,
+  weekStartIndex,
+}: {
+  currencyCode: string;
+  exchangeRates: Record<string, number>;
+  getMonthTransactions: (month: Date) => Transaction[];
+  onSelectDate: (date: Date) => void;
+  onSelectMonth: (month: Date) => void;
+  selectedMonth: Date;
+  weekStartIndex: number;
+}) {
+  return (
+    <HomeMonthPager
+      onSelectMonth={onSelectMonth}
+      renderMonth={(month) => (
+        <CalendarMonthGrid
+          currencyCode={currencyCode}
+          exchangeRates={exchangeRates}
+          monthTransactions={getMonthTransactions(month)}
+          onSelectDate={onSelectDate}
+          selectedMonth={month}
+          weekStartIndex={weekStartIndex}
+        />
+      )}
+      selectedMonth={selectedMonth}
+    />
+  );
+}
+
+function TransactionListMonthPager({
+  currencyCode,
+  currencySymbol,
+  exchangeRates,
+  getMonthTransactions,
+  isRefreshing,
+  onDeleteTransaction,
+  onEditTransaction,
+  onRefresh,
+  onSelectMonth,
+  selectedMonth,
+}: {
+  currencyCode: string;
+  currencySymbol: string;
+  exchangeRates: Record<string, number>;
+  getMonthTransactions: (month: Date) => Transaction[];
+  isRefreshing: boolean;
+  onDeleteTransaction: (transaction: Transaction) => void;
+  onEditTransaction: (transaction: Transaction) => void;
+  onRefresh: () => void;
+  onSelectMonth: (month: Date) => void;
+  selectedMonth: Date;
+}) {
+  return (
+    <HomeMonthPager
+      onSelectMonth={onSelectMonth}
+      renderMonth={(month) => (
+        <TransactionListMonthPane
+          currencyCode={currencyCode}
+          currencySymbol={currencySymbol}
+          exchangeRates={exchangeRates}
+          isRefreshing={isRefreshing}
+          monthTransactions={getMonthTransactions(month)}
+          onDeleteTransaction={onDeleteTransaction}
+          onEditTransaction={onEditTransaction}
+          onRefresh={onRefresh}
+        />
+      )}
+      selectedMonth={selectedMonth}
+    />
+  );
+}
+
+function TransactionListMonthPane({
+  currencyCode,
+  currencySymbol,
+  exchangeRates,
+  isRefreshing,
+  monthTransactions,
+  onDeleteTransaction,
+  onEditTransaction,
+  onRefresh,
+}: {
+  currencyCode: string;
+  currencySymbol: string;
+  exchangeRates: Record<string, number>;
+  isRefreshing: boolean;
+  monthTransactions: Transaction[];
+  onDeleteTransaction: (transaction: Transaction) => void;
+  onEditTransaction: (transaction: Transaction) => void;
+  onRefresh: () => void;
+}) {
+  const dayGroups = useMemo<DayGroup[]>(() => {
+    const map = new Map<string, Transaction[]>();
+    for (const tx of monthTransactions) {
+      const key = localDateKey(tx.date);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(tx);
+    }
+
+    return Array.from(map.entries())
+      .map(([dateKey, txs]) => ({
+        dateKey,
+        date: localDateFromKey(dateKey),
+        transactions: txs,
+        netCents: txs.reduce((s, tx) => {
+          const cents = convertCents(tx.amountCents, tx.currencyCode, currencyCode, exchangeRates);
+          return tx.type === "income" ? s + cents : tx.type === "expense" ? s - cents : s;
+        }, 0),
+      }))
+      .sort((a, b) => b.date.getTime() - a.date.getTime());
+  }, [currencyCode, exchangeRates, monthTransactions]);
+
+  if (monthTransactions.length === 0) {
+    return (
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1 }}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
+        showsVerticalScrollIndicator={false}
+      >
+        <EmptyLogState />
+      </ScrollView>
+    );
+  }
+
+  return (
+    <ScrollView
+      contentContainerStyle={styles.txListContent}
+      refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
+      showsVerticalScrollIndicator={false}
+      style={styles.txList}
+    >
+      {dayGroups.map((group) => (
+        <View key={group.dateKey}>
+          <DateGroupHeader
+            currencySymbol={currencySymbol}
+            date={group.date}
+            netCents={group.netCents}
+          />
+          {group.transactions.map((tx) => (
+            <TransactionRow
+              currencyCode={currencyCode}
+              currencySymbol={currencySymbol}
+              exchangeRates={exchangeRates}
+              key={tx.id}
+              onDelete={() => onDeleteTransaction(tx)}
+              onPress={() => onEditTransaction(tx)}
+              transaction={tx}
+            />
+          ))}
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+function HomeMonthPager({
+  onSelectMonth,
+  renderMonth,
+  selectedMonth,
+}: {
+  onSelectMonth: (month: Date) => void;
+  renderMonth: (month: Date) => React.ReactNode;
+  selectedMonth: Date;
+}) {
+  const pagerWidth = Dimensions.get("window").width;
+  const monthSwipeX = useSharedValue(0);
+  const selectedMonthKey = `${selectedMonth.getFullYear()}-${selectedMonth.getMonth()}`;
+
+  const monthPanes = useMemo(() => {
+    const previousMonth = new Date(
+      selectedMonth.getFullYear(),
+      selectedMonth.getMonth() - 1,
+      1,
+    );
+    const currentMonth = new Date(
+      selectedMonth.getFullYear(),
+      selectedMonth.getMonth(),
+      1,
+    );
+    const nextMonth = new Date(
+      selectedMonth.getFullYear(),
+      selectedMonth.getMonth() + 1,
+      1,
+    );
+
+    return [previousMonth, currentMonth, nextMonth].map((month) => ({
+      key: `${month.getFullYear()}-${month.getMonth()}`,
+      month,
+    }));
+  }, [selectedMonth]);
+
+  const shiftMonth = useCallback(
+    (months: number) => {
+      onSelectMonth(new Date(
+        selectedMonth.getFullYear(),
+        selectedMonth.getMonth() + months,
+        1,
+      ));
+    },
+    [onSelectMonth, selectedMonth],
+  );
+
+  const monthSwipeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-4, 4])
+        .failOffsetY([-24, 24])
+        .onBegin(() => {
+          cancelAnimation(monthSwipeX);
+        })
+        .onUpdate((event) => {
+          monthSwipeX.value = Math.max(-pagerWidth, Math.min(pagerWidth, event.translationX));
+        })
+        .onEnd((event) => {
+          const horizontalMove = Math.abs(event.translationX);
+          const horizontalVelocity = Math.abs(event.velocityX);
+          const shouldChangeMonth = horizontalMove > 44 || horizontalVelocity > 420;
+          if (!shouldChangeMonth) {
+            monthSwipeX.value = withSpring(0, { damping: 22, stiffness: 260 });
+            return;
+          }
+
+          const direction = event.translationX < 0 ? 1 : -1;
+          const exitX = direction === 1 ? -pagerWidth : pagerWidth;
+
+          monthSwipeX.value = withTiming(exitX, { duration: 110 }, (finished) => {
+            if (!finished) return;
+            runOnJS(shiftMonth)(direction);
+          });
+        })
+        .onFinalize((_event, success) => {
+          if (!success) {
+            monthSwipeX.value = withSpring(0, { damping: 22, stiffness: 260 });
+          }
+        }),
+    [monthSwipeX, pagerWidth, shiftMonth],
+  );
+
+  const monthSwipeStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: -pagerWidth + monthSwipeX.value }],
+  }));
+
+  useLayoutEffect(() => {
+    monthSwipeX.value = 0;
+  }, [monthSwipeX, selectedMonthKey]);
+
+  return (
+    <View style={styles.calendarMonthPager}>
+      <GestureDetector gesture={monthSwipeGesture}>
+        <Reanimated.View
+          style={[
+            styles.calendarMonthPagerTrack,
+            { width: pagerWidth * 3 },
+            monthSwipeStyle,
+          ]}
+        >
+          {monthPanes.map((pane) => (
+            <View key={pane.key} style={[styles.calendarMonthPane, { width: pagerWidth }]}>
+              {renderMonth(pane.month)}
+            </View>
+          ))}
+        </Reanimated.View>
+      </GestureDetector>
+    </View>
+  );
+}
+
 function CalendarMonthGrid({
   currencyCode,
   exchangeRates,
   monthTransactions,
+  onSelectDate,
   selectedMonth,
   weekStartIndex,
 }: {
   currencyCode: string;
   exchangeRates: Record<string, number>;
   monthTransactions: Transaction[];
+  onSelectDate: (date: Date) => void;
   selectedMonth: Date;
   weekStartIndex: number;
 }) {
@@ -1558,9 +1896,18 @@ function CalendarMonthGrid({
           <View key={`week-${rowIndex}`} style={styles.calendarRow}>
             {week.map((day, columnIndex) => {
               const totals = day !== null ? dayTotals.get(day) : undefined;
+              const date = day !== null
+                ? new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), day)
+                : null;
               return (
-                <View
+                <Pressable
                   key={`${rowIndex}-${columnIndex}`}
+                  accessibilityLabel={date ? `Show entries for ${format(date, "EEEE, d MMMM yyyy")}` : undefined}
+                  accessibilityRole={date ? "button" : undefined}
+                  disabled={date === null}
+                  onPress={() => {
+                    if (date) onSelectDate(date);
+                  }}
                   style={[
                     styles.calendarDayCell,
                     day === null && styles.calendarDayCellHidden,
@@ -1579,13 +1926,341 @@ function CalendarMonthGrid({
                       </Text>
                     )}
                   </View>
-                </View>
+                </Pressable>
               );
             })}
           </View>
         ))}
       </View>
     </View>
+  );
+}
+
+function CalendarSheetChevron({ direction }: { direction: "left" | "right" }) {
+  const d = direction === "left" ? "M15 18l-6-6 6-6" : "M9 6l6 6-6 6";
+  return (
+    <Svg fill="none" height={24} viewBox="0 0 24 24" width={24}>
+      <Path
+        d={d}
+        stroke={figmaColors.grayNeutral["600"]}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2.5}
+      />
+    </Svg>
+  );
+}
+
+function CalendarDayPane({
+  currencyCode,
+  currencySymbol,
+  dayGroup,
+  exchangeRates,
+  onDeleteTransaction,
+  onOpenTransaction,
+  width,
+}: {
+  currencyCode: string;
+  currencySymbol: string;
+  dayGroup: DayGroup;
+  exchangeRates: Record<string, number>;
+  onDeleteTransaction: (transaction: Transaction) => void;
+  onOpenTransaction: (transaction: Transaction) => void;
+  width: number;
+}) {
+  const netSign = dayGroup.netCents >= 0 ? "+" : "−";
+
+  return (
+    <View style={[styles.calendarSheetPane, { width }]}>
+      <View style={styles.calendarSheetHeader}>
+        <Text style={styles.calendarSheetTitle}>{format(dayGroup.date, "EEE, d MMM")}</Text>
+        <Text style={styles.calendarSheetNet}>
+          {netSign}{formatCents(Math.abs(dayGroup.netCents), currencySymbol)}
+        </Text>
+      </View>
+      <View style={styles.calendarSheetDivider} />
+
+      <ScrollView
+        contentContainerStyle={styles.calendarSheetListContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {dayGroup.transactions.length === 0 ? (
+          <EmptyLogState />
+        ) : (
+          dayGroup.transactions.map((tx) => (
+            <TransactionRow
+              currencyCode={currencyCode}
+              currencySymbol={currencySymbol}
+              exchangeRates={exchangeRates}
+              key={tx.id}
+              onDelete={() => onDeleteTransaction(tx)}
+              onPress={() => onOpenTransaction(tx)}
+              transaction={tx}
+            />
+          ))
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
+function CalendarDaySheet({
+  currencyCode,
+  currencySymbol,
+  dayGroup,
+  exchangeRates,
+  getDayGroup,
+  onAdd,
+  onClose,
+  onDeleteTransaction,
+  onEditTransaction,
+  onSelectDate,
+  toastMessage,
+  toastOnAction,
+  toastVariant,
+  toastVisible,
+  visible,
+}: {
+  currencyCode: string;
+  currencySymbol: string;
+  dayGroup: DayGroup | null;
+  exchangeRates: Record<string, number>;
+  getDayGroup: (date: Date) => DayGroup;
+  onAdd: (date: Date) => void;
+  onClose: () => void;
+  onDeleteTransaction: (transaction: Transaction) => void;
+  onEditTransaction: (transaction: Transaction) => void;
+  onSelectDate: (date: Date) => void;
+  toastMessage: string;
+  toastOnAction?: () => void;
+  toastVariant: "default" | "destructive";
+  toastVisible: boolean;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const sheetWidth = Dimensions.get("window").width;
+  const sheetHeight = Dimensions.get("window").height * 0.75;
+  const [isMounted, setIsMounted] = useState(visible);
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const sheetSwipeX = useSharedValue(0);
+  const sheetTranslateY = useRef(new Animated.Value(sheetHeight)).current;
+  const date = dayGroup?.date ?? new Date();
+  const paneGroups = useMemo(() => {
+    const previousDate = new Date(date);
+    previousDate.setDate(previousDate.getDate() - 1);
+    const nextDate = new Date(date);
+    nextDate.setDate(nextDate.getDate() + 1);
+
+    return [
+      getDayGroup(previousDate),
+      dayGroup ?? getDayGroup(date),
+      getDayGroup(nextDate),
+    ];
+  }, [date, dayGroup, getDayGroup]);
+
+  const shiftDate = useCallback(
+    (days: number) => {
+      const nextDate = new Date(date);
+      nextDate.setDate(nextDate.getDate() + days);
+      onSelectDate(nextDate);
+    },
+    [date, onSelectDate],
+  );
+
+  const sheetSwipeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-4, 4])
+        .failOffsetY([-24, 24])
+        .onBegin(() => {
+          cancelAnimation(sheetSwipeX);
+        })
+        .onUpdate((event) => {
+          sheetSwipeX.value = Math.max(-sheetWidth, Math.min(sheetWidth, event.translationX));
+        })
+        .onEnd((event) => {
+          const horizontalMove = Math.abs(event.translationX);
+          const horizontalVelocity = Math.abs(event.velocityX);
+          const shouldChangeDate = horizontalMove > 44 || horizontalVelocity > 420;
+          if (!shouldChangeDate) {
+            sheetSwipeX.value = withSpring(0, { damping: 22, stiffness: 260 });
+            return;
+          }
+
+          const direction = event.translationX < 0 ? 1 : -1;
+          const exitX = direction === 1 ? -sheetWidth : sheetWidth;
+
+          sheetSwipeX.value = withTiming(exitX, { duration: 110 }, (finished) => {
+            if (!finished) return;
+            runOnJS(shiftDate)(direction);
+          });
+        })
+        .onFinalize((_event, success) => {
+          if (!success) {
+            sheetSwipeX.value = withSpring(0, { damping: 22, stiffness: 260 });
+          }
+        }),
+    [sheetSwipeX, sheetWidth, shiftDate],
+  );
+
+  const sheetSwipeStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: -sheetWidth + sheetSwipeX.value }],
+  }));
+
+  useLayoutEffect(() => {
+    sheetSwipeX.value = 0;
+  }, [dayGroup?.dateKey, sheetSwipeX]);
+
+  const animateClosed = useCallback(
+    (afterClose?: () => void) => {
+      Animated.parallel([
+        Animated.timing(backdropOpacity, {
+          duration: 180,
+          toValue: 0,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sheetTranslateY, {
+          duration: 220,
+          toValue: sheetHeight,
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (!finished) return;
+        setIsMounted(false);
+        afterClose?.();
+      });
+    },
+    [backdropOpacity, sheetHeight, sheetTranslateY],
+  );
+
+  const closeSheet = useCallback(() => {
+    animateClosed(onClose);
+  }, [animateClosed, onClose]);
+
+  const openTransaction = useCallback(
+    (transaction: Transaction) => {
+      animateClosed(() => {
+        onEditTransaction(transaction);
+      });
+    },
+    [animateClosed, onEditTransaction],
+  );
+
+  useEffect(() => {
+    if (visible) {
+      setIsMounted(true);
+      backdropOpacity.setValue(0);
+      sheetSwipeX.value = 0;
+      sheetTranslateY.setValue(sheetHeight);
+      Animated.parallel([
+        Animated.timing(backdropOpacity, {
+          duration: 180,
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+        Animated.spring(sheetTranslateY, {
+          bounciness: 0,
+          speed: 18,
+          toValue: 0,
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return;
+    }
+
+    animateClosed();
+  }, [animateClosed, backdropOpacity, sheetHeight, sheetSwipeX, sheetTranslateY, visible]);
+
+  if (!isMounted) return null;
+
+  return (
+    <Modal animationType="none" onRequestClose={closeSheet} transparent visible={isMounted}>
+      <View style={styles.calendarSheetRoot}>
+        <Animated.View style={[styles.calendarSheetBackdrop, { opacity: backdropOpacity }]}>
+          <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
+        </Animated.View>
+        <Animated.View
+          style={[
+            styles.calendarSheet,
+            { height: sheetHeight, transform: [{ translateY: sheetTranslateY }] },
+          ]}
+        >
+          <GestureDetector gesture={sheetSwipeGesture}>
+            <Reanimated.View
+              style={[
+                styles.calendarSheetSwipeContent,
+                { width: sheetWidth * 3 },
+                sheetSwipeStyle,
+              ]}
+            >
+              {paneGroups.map((group) => (
+                <CalendarDayPane
+                  currencyCode={currencyCode}
+                  currencySymbol={currencySymbol}
+                  dayGroup={group}
+                  exchangeRates={exchangeRates}
+                  key={group.dateKey}
+                  onDeleteTransaction={onDeleteTransaction}
+                  onOpenTransaction={openTransaction}
+                  width={sheetWidth}
+                />
+              ))}
+            </Reanimated.View>
+          </GestureDetector>
+
+          <Pressable
+            accessibilityLabel="Add entry for selected date"
+            accessibilityRole="button"
+            onPress={() => onAdd(date)}
+            style={[styles.calendarSheetFab, { bottom: insets.bottom + 92 }]}
+          >
+            <MingCuteIcon color={figmaColors.base.white} name="add-fill" size={28} />
+          </Pressable>
+
+          <View style={[styles.calendarSheetBottomBar, { paddingBottom: insets.bottom }]}>
+            <View style={styles.calendarSheetDateControls}>
+              <Pressable
+                accessibilityLabel="Previous day"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => shiftDate(-1)}
+                style={styles.calendarSheetNavButton}
+              >
+                <CalendarSheetChevron direction="left" />
+              </Pressable>
+              <Text numberOfLines={1} style={styles.calendarSheetBottomDate}>
+                {format(date, "EEE, d MMM yyyy")}
+              </Text>
+              <Pressable
+                accessibilityLabel="Next day"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => shiftDate(1)}
+                style={styles.calendarSheetNavButton}
+              >
+                <CalendarSheetChevron direction="right" />
+              </Pressable>
+            </View>
+            <Pressable
+              accessibilityLabel="Close selected date"
+              accessibilityRole="button"
+              onPress={closeSheet}
+              style={styles.calendarSheetCloseButton}
+            >
+              <Text style={styles.calendarSheetCloseText}>Close</Text>
+            </Pressable>
+          </View>
+
+          <ToastNotification
+            bottomOffset={insets.bottom + 24}
+            message={toastMessage}
+            onAction={toastOnAction}
+            variant={toastVariant}
+            visible={toastVisible}
+          />
+        </Animated.View>
+      </View>
+    </Modal>
   );
 }
 
@@ -2241,6 +2916,18 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     textAlign: "center",
   },
+  calendarMonthPager: {
+    flex: 1,
+    overflow: "hidden",
+    width: "100%",
+  },
+  calendarMonthPagerTrack: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  calendarMonthPane: {
+    flex: 1,
+  },
   calendarContainer: {
     flex: 1,
     gap: 4,
@@ -2306,6 +2993,122 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.medium,
     fontSize: 10,
     lineHeight: 14,
+  },
+  calendarSheetRoot: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  calendarSheetBackdrop: {
+    backgroundColor: "rgba(17, 24, 39, 0.38)",
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
+  calendarSheet: {
+    backgroundColor: figmaColors.bg,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    overflow: "hidden",
+  },
+  calendarSheetSwipeContent: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  calendarSheetPane: {
+    flex: 1,
+  },
+  calendarSheetHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingTop: 28,
+    paddingBottom: 16,
+  },
+  calendarSheetTitle: {
+    color: figmaColors.grayNeutral["500"],
+    fontFamily: fontFamily.bold,
+    fontSize: 16,
+    letterSpacing: -0.15,
+  },
+  calendarSheetNet: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.bold,
+    fontSize: 18,
+    letterSpacing: -0.2,
+  },
+  calendarSheetDivider: {
+    backgroundColor: figmaColors.grayNeutral["200"],
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: 20,
+  },
+  calendarSheetListContent: {
+    flexGrow: 1,
+    paddingBottom: 160,
+    paddingTop: 8,
+  },
+  calendarSheetFab: {
+    alignItems: "center",
+    backgroundColor: figmaColors.blue["500"],
+    borderRadius: 999,
+    height: 56,
+    justifyContent: "center",
+    position: "absolute",
+    right: 16,
+    shadowColor: figmaColors.base.black,
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    width: 56,
+  },
+  calendarSheetBottomBar: {
+    alignItems: "center",
+    backgroundColor: figmaColors.base.white,
+    borderTopColor: figmaColors.grayNeutral["100"],
+    borderTopWidth: StyleSheet.hairlineWidth,
+    bottom: 0,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    left: 0,
+    minHeight: 80,
+    paddingLeft: 4,
+    paddingRight: 16,
+    paddingTop: 8,
+    position: "absolute",
+    right: 0,
+  },
+  calendarSheetDateControls: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 1,
+    gap: 8,
+  },
+  calendarSheetNavButton: {
+    alignItems: "center",
+    height: 40,
+    justifyContent: "center",
+    width: 32,
+  },
+  calendarSheetBottomDate: {
+    color: figmaColors.grayNeutral["600"],
+    fontFamily: fontFamily.semiBold,
+    fontSize: 17,
+    letterSpacing: -0.2,
+    maxWidth: 210,
+  },
+  calendarSheetCloseButton: {
+    alignItems: "center",
+    minHeight: 44,
+    justifyContent: "center",
+    paddingLeft: 16,
+  },
+  calendarSheetCloseText: {
+    color: figmaColors.grayNeutral["900"],
+    fontFamily: fontFamily.medium,
+    fontSize: 17,
+    letterSpacing: -0.2,
   },
   emptyStateContainer: {
     alignItems: "center",
