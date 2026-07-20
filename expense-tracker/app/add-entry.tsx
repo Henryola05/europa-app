@@ -10,6 +10,7 @@ import {
   Alert,
   Animated,
   Dimensions,
+  Easing,
   KeyboardAvoidingView,
   Modal,
   PanResponder,
@@ -754,6 +755,26 @@ function NewCategorySheet({
     }
   }, [backdropOpacity, translateY, visible]);
 
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isEmojiPickerOpen ? 0 : 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentScale, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isEmojiPickerOpen ? 0.96 : 1,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentScale, isEmojiPickerOpen]);
+
   const handleSave = useCallback(() => {
     const trimmedName = name.trim();
     if (!trimmedName) return;
@@ -771,6 +792,10 @@ function NewCategorySheet({
       transparent
       visible={visible}
     >
+      <Animated.View
+        pointerEvents={isEmojiPickerOpen ? "none" : "auto"}
+        style={{ flex: 1, opacity: contentOpacity, transform: [{ scale: contentScale }] }}
+      >
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.categorySheetRoot}
@@ -898,6 +923,7 @@ function NewCategorySheet({
           </Animated.View>
         </View>
       </KeyboardAvoidingView>
+      </Animated.View>
       <EmojiPickerSheet
         visible={isEmojiPickerOpen}
         onSelect={(e) => {
@@ -1065,9 +1091,36 @@ export function CreateAccountBottomSheet({
     }
   }, [balanceCents, canSubmit, description, name, onSubmit, selectedGroup]);
 
+  const isChildSheetOpen = isGroupPickerOpen || isBalanceSheetOpen;
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isChildSheetOpen ? 0 : 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentScale, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isChildSheetOpen ? 0.96 : 1,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentScale, isChildSheetOpen]);
+
   return (
     <Modal animationType="none" onRequestClose={closeSheet} transparent visible={visible}>
-      <View style={styles.categorySheetRoot}>
+      <Animated.View
+        pointerEvents={isChildSheetOpen ? "none" : "auto"}
+        style={[
+          styles.categorySheetRoot,
+          { opacity: contentOpacity, transform: [{ scale: contentScale }] },
+        ]}
+      >
         <Animated.View style={[styles.categorySheetBackdrop, { opacity: backdropOpacity }]}>
           <Pressable onPress={closeSheet} style={StyleSheet.absoluteFill} />
         </Animated.View>
@@ -1223,7 +1276,7 @@ export function CreateAccountBottomSheet({
             </Animated.View>
           </KeyboardAvoidingView>
         </View>
-      </View>
+      </Animated.View>
 
       <GroupPickerSheet
         onClose={() => setIsGroupPickerOpen(false)}
@@ -1407,6 +1460,15 @@ function AccountsBottomSheet({
     });
   }, [backdropOpacity, onClose, translateY]);
 
+  const handleEditBalance = useCallback((accountId: string) => {
+    Animated.parallel([
+      Animated.timing(translateY, { duration: 220, toValue: 600, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { duration: 220, toValue: 0, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) onEditBalance(accountId);
+    });
+  }, [backdropOpacity, onEditBalance, translateY]);
+
   useEffect(() => {
     if (visible) {
       translateY.setValue(500);
@@ -1587,7 +1649,7 @@ function AccountsBottomSheet({
                       onDragEnd={(dy) => handleDragEnd(groupData.group, dy)}
                       onDragMove={(dy) => handleDragMove(groupData.group, dy)}
                       onDragStart={(y0) => handleDragStart(groupData.group, index, y0)}
-                      onEditBalance={() => onEditBalance(account.id)}
+                      onEditBalance={() => handleEditBalance(account.id)}
                       onPress={() => { onSelectAccount(account); closeSheet(); }}
                       shift={getShift(groupData.group, index)}
                     />
@@ -2480,6 +2542,27 @@ function CategoryPickerSheet({
     });
   }, [reorderCategories, type]);
 
+  const isChildSheetOpen = isNewCategoryOpen || editingCategory !== null;
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isChildSheetOpen ? 0 : 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentScale, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isChildSheetOpen ? 0.96 : 1,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentScale, isChildSheetOpen]);
+
   return (
     <Modal
       animationType="none"
@@ -2487,7 +2570,13 @@ function CategoryPickerSheet({
       transparent
       visible={visible}
     >
-      <View style={styles.categorySheetRoot}>
+      <Animated.View
+        pointerEvents={isChildSheetOpen ? "none" : "auto"}
+        style={[
+          styles.categorySheetRoot,
+          { opacity: contentOpacity, transform: [{ scale: contentScale }] },
+        ]}
+      >
         <Animated.View
           style={[styles.categorySheetBackdrop, { opacity: backdropOpacity }]}
         >
@@ -2623,7 +2712,7 @@ function CategoryPickerSheet({
             </ScrollView>
           </Animated.View>
         </View>
-      </View>
+      </Animated.View>
 
       <NewCategorySheet
         initialColor={editingCategory?.color}
@@ -2636,7 +2725,7 @@ function CategoryPickerSheet({
         onDelete={editingCategory ? handleDeleteEditingCategory : undefined}
         onSave={editingCategory ? handleUpdateCategory : handleAddCategory}
         type={type}
-        visible={isNewCategoryOpen || editingCategory !== null}
+        visible={isChildSheetOpen}
       />
     </Modal>
   );
@@ -2821,6 +2910,26 @@ function AmountInputSheet({
     });
   }, [backdropOpacity, onClose, onDismiss, translateY]);
 
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isCurrencyPickerOpen ? 0 : 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentScale, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        toValue: isCurrencyPickerOpen ? 0.96 : 1,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentScale, isCurrencyPickerOpen]);
+
   const handleKeyPress = (key: KeypadKey) => {
     if (key.type === "empty") {
       return;
@@ -2878,7 +2987,13 @@ function AmountInputSheet({
       transparent
       visible={visible}
     >
-      <View style={styles.amountSheetBackdrop}>
+      <Animated.View
+        pointerEvents={isCurrencyPickerOpen ? "none" : "auto"}
+        style={[
+          styles.amountSheetBackdrop,
+          { opacity: contentOpacity, transform: [{ scale: contentScale }] },
+        ]}
+      >
         <Animated.View
           pointerEvents="box-none"
           style={[styles.amountSheetOverlay, { opacity: backdropOpacity }]}
@@ -2977,7 +3092,7 @@ function AmountInputSheet({
             ))}
           </View>
         </Animated.View>
-      </View>
+      </Animated.View>
 
       <CurrencyPicker
         onClose={() => setIsCurrencyPickerOpen(false)}
@@ -3363,6 +3478,7 @@ export default function AddEntryScreen() {
     if (!account) return;
     setEditBalanceAccountId(accountId);
     setEditBalanceCents(account.balanceCents);
+    setIsAccountsEditOpen(false);
     setIsEditBalanceOpen(true);
   }
 
@@ -3384,6 +3500,7 @@ export default function AddEntryScreen() {
     setOpeningBalance(editBalanceAccountId, newBalanceCents - net);
     setIsEditBalanceOpen(false);
     setEditBalanceAccountId(null);
+    setTimeout(() => setIsAccountsEditOpen(true), 50);
   }
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [isAccountPickerOpen, setIsAccountPickerOpen] = useState(false);
